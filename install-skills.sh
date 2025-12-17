@@ -12,7 +12,7 @@
 #   --skill <name>      Install specific skill(s) (can be used multiple times)
 #
 # Environment Variables:
-#   SKILLS_INSTALL_PATH  Custom installation path (default: $PWD/.claude/skills)
+#   SKILLS_INSTALL_PATH  Custom installation path (default: $PWD/.claude/skills or ~/.codex/skills when --codex is used)
 
 set -e
 
@@ -22,9 +22,11 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-# Default installation path
+# Default installation paths
 DEFAULT_INSTALL_PATH="$PWD/.claude/skills"
-INSTALL_PATH="${SKILLS_INSTALL_PATH:-$DEFAULT_INSTALL_PATH}"
+CODEX_INSTALL_PATH="$HOME/.codex/skills"
+INSTALL_PATH="$DEFAULT_INSTALL_PATH"
+USE_CODEX_PATH=false
 
 # Script directory (where this script is located)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -59,9 +61,10 @@ Options:
   --list              List available skills
   --all               Install all skills (default)
   --skill <name>      Install specific skill(s) (can be used multiple times)
+  --codex             Install to Codex global skills path (~/.codex/skills)
 
 Environment Variables:
-  SKILLS_INSTALL_PATH  Custom installation path (default: \$PWD/.claude/skills)
+  SKILLS_INSTALL_PATH  Custom installation path (default: \$PWD/.claude/skills or ~/.codex/skills with --codex)
 
 Examples:
   # Install all skills to default location
@@ -78,6 +81,9 @@ Examples:
 
   # Install to custom path with specific skill
   SKILLS_INSTALL_PATH=/path/to/project ./install-skills.sh --skill my-skill
+
+  # Install for Codex (global)
+  ./install-skills.sh --codex --all
 
 EOF
 }
@@ -157,6 +163,10 @@ while [[ $# -gt 0 ]]; do
             INSTALL_ALL=true
             shift
             ;;
+        --codex)
+            USE_CODEX_PATH=true
+            shift
+            ;;
         --skill)
             INSTALL_ALL=false
             if [ -z "$2" ] || [[ "$2" == --* ]]; then
@@ -172,8 +182,15 @@ while [[ $# -gt 0 ]]; do
             show_help
             exit 1
             ;;
-    esac
+esac
 done
+
+# Resolve installation path after parsing flags/environment
+if [ "$USE_CODEX_PATH" = true ]; then
+    INSTALL_PATH="${SKILLS_INSTALL_PATH:-$CODEX_INSTALL_PATH}"
+else
+    INSTALL_PATH="${SKILLS_INSTALL_PATH:-$DEFAULT_INSTALL_PATH}"
+fi
 
 # Main installation
 echo ""

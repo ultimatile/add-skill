@@ -159,6 +159,33 @@ When you create a new skill, add its path to the `skills` array:
 ]
 ```
 
+## Using with Codex (experimental)
+
+Codex currently loads skills only from the global path `~/.codex/skills/**/SKILL.md` (one directory per skill). To install this repository's skills for Codex:
+
+1. Enable the experimental feature flag in `~/.codex/config.toml`:
+
+   ```toml
+   [features]
+   skills = true
+   ```
+
+2. Install the skills to Codex's path (global, not project-scoped):
+
+   ```bash
+   # Option A: use the convenience flag
+   ./install-skills.sh --codex --all
+
+   # Option B: explicit path override (same effect)
+   SKILLS_INSTALL_PATH=$HOME/.codex/skills ./install-skills.sh --all
+   ```
+
+3. Restart Codex so it reloads the newly installed skills.
+
+Notes:
+- Codex does not currently support project-specific skill locations; the installs above are global.
+- Each skill must reside in its own directory (e.g., `~/.codex/skills/my-skill/SKILL.md`) with `name`/`description` kept to one line and within Codex limits (≤100/≤500 chars respectively).
+
 **Important**: The skill path format is `"./skills/skill-name"` where `skill-name` matches the directory name under `skills/`.
 
 ## Skill Design Principles
