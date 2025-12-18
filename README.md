@@ -173,10 +173,13 @@ Codex currently loads skills only from the global path `~/.codex/skills/**/SKILL
 2. Install the skills to Codex's path (global, not project-scoped):
 
    ```bash
-   # Option A: use the convenience flag
+   # Option A: Copy mode (default)
    ./install-skills.sh --codex --all
 
-   # Option B: explicit path override (same effect)
+   # Option B: Symlink mode (recommended for development)
+   ./install-skills.sh --symlink --codex --all
+
+   # Option C: explicit path override (same effect as Option A)
    SKILLS_INSTALL_PATH=$HOME/.codex/skills ./install-skills.sh --all
    ```
 
@@ -185,6 +188,7 @@ Codex currently loads skills only from the global path `~/.codex/skills/**/SKILL
 Notes:
 - Codex does not currently support project-specific skill locations; the installs above are global.
 - Each skill must reside in its own directory (e.g., `~/.codex/skills/my-skill/SKILL.md`) with `name`/`description` kept to one line and within Codex limits (≤100/≤500 chars respectively).
+- Using `--symlink` allows automatic updates when you `git pull` in the repository.
 
 **Important**: The skill path format is `"./skills/skill-name"` where `skill-name` matches the directory name under `skills/`.
 
@@ -214,11 +218,32 @@ Copy skills directly to your project:
 # Install specific skills only
 ./install-skills.sh --skill your-skill-name
 
+# Install with symlinks (recommended for development)
+./install-skills.sh --symlink --all
+
+# Install with symlinks, forcefully overwriting existing files
+./install-skills.sh --symlink-force --all
+
 # Or manually copy individual skill
 cp -r skills/your-skill-name ~/.claude/skills/your-skill-name
 ```
 
 Skills in `.claude/skills/` are automatically detected by Claude Code. No additional configuration needed.
+
+**Symlink vs Copy Mode:**
+
+- **Copy mode** (default): Skills are copied to the installation directory
+  - Pros: Self-contained, won't break if source repository is moved/deleted
+  - Cons: Need to reinstall after updating the repository
+
+- **Symlink mode** (`--symlink`): Skills are symlinked to the source repository
+  - Pros: Updates automatically when you `git pull` in the source repository
+  - Cons: Requires the source repository to remain in place
+  - Recommended for: Active development, keeping skills up-to-date
+  - Note: If symlink creation fails, you'll be prompted to confirm force overwrite
+
+- **Symlink force mode** (`--symlink-force`): Same as symlink mode but forcefully overwrites existing files
+  - Use when: You want to replace existing files without being prompted
 
 **Note**: The install script only installs skill subdirectories (e.g., `skills/your-skill/`), not the template files in the root `skills/` directory.
 
