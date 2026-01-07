@@ -161,7 +161,7 @@ When you create a new skill, add its path to the `skills` array:
 
 ## Using with Codex (experimental)
 
-Codex currently loads skills only from the global path `~/.codex/skills/**/SKILL.md` (one directory per skill). To install this repository's skills for Codex:
+Codex loads skills from multiple locations with different precedence levels. To install this repository's skills for Codex:
 
 1. Enable the experimental feature flag in `~/.codex/config.toml`:
 
@@ -170,25 +170,39 @@ Codex currently loads skills only from the global path `~/.codex/skills/**/SKILL
    skills = true
    ```
 
-2. Install the skills to Codex's path (global, not project-scoped):
+2. Install the skills to Codex's path:
 
    ```bash
-   # Option A: Copy mode (default)
+   # Option A: Repository-level (highest precedence, recommended for team use)
+   ./install-skills.sh --codex-repo --all
+
+   # Option B: User-level (global, lower precedence)
    ./install-skills.sh --codex --all
 
-   # Option B: Symlink mode (recommended for development)
-   ./install-skills.sh --symlink --codex --all
-
-   # Option C: explicit path override (same effect as Option A)
-   SKILLS_INSTALL_PATH=$HOME/.codex/skills ./install-skills.sh --all
+   # Option C: With symlinks (recommended for development)
+   ./install-skills.sh --symlink --codex-repo --all
    ```
 
 3. Restart Codex so it reloads the newly installed skills.
 
+### Codex Skill Locations
+
+Codex loads skills from these locations in order of precedence (high to low):
+
+| Option | Location | Precedence | Use Case |
+|--------|----------|------------|----------|
+| `--codex-repo` | `./.codex/skills` | High | Repository-specific skills, team collaboration |
+| `--codex` | `~/.codex/skills` | Low | User-specific skills, personal use |
+
+**Recommendations:**
+- Use `--codex-repo` for team-shared skills that should be available to everyone working on the repository
+- Use `--codex` for personal skills that apply across all your projects
+- Use `--symlink` with either option to enable automatic updates when you `git pull`
+
 Notes:
-- Codex does not currently support project-specific skill locations; the installs above are global.
-- Each skill must reside in its own directory (e.g., `~/.codex/skills/my-skill/SKILL.md`) with `name`/`description` kept to one line and within Codex limits (≤100/≤500 chars respectively).
-- Using `--symlink` allows automatic updates when you `git pull` in the repository.
+- Repository-level skills (`./.codex/skills`) override user-level skills with the same name
+- Each skill must reside in its own directory with `name`/`description` kept to one line and within Codex limits (≤100/≤500 chars respectively)
+- Using `--symlink` allows automatic updates when you `git pull` in the repository
 
 **Important**: The skill path format is `"./skills/skill-name"` where `skill-name` matches the directory name under `skills/`.
 
