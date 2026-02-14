@@ -1,22 +1,14 @@
 #!/bin/bash
 #
-# Install skills to a project directory
+# add-skill - Install skills from a local repository to a project directory
 #
 # Usage:
-#   ./install-skills.sh [options]
-#
-# Options:
-#   --help              Show this help message
-#   --list              List available skills
-#   --all               Install all skills (default)
-#   --skill <name>      Install specific skill(s) (can be used multiple times)
-#   --symlink           Create symlinks instead of copying (enables automatic updates)
-#   --symlink-force     Create symlinks with force flag (overwrite existing files without prompt)
-#   --codex             Install to Codex global skills path (~/.codex/skills)
-#   --codex-repo        Install to Codex repository-level path (./.codex/skills)
+#   add-skill <skills-repo-path> [options]
+#   add-skill --install
+#   add-skill --help
 #
 # Environment Variables:
-#   SKILLS_INSTALL_PATH  Custom installation path (default: $PWD/.claude/skills, ~/.codex/skills with --codex, or ./.codex/skills with --codex-repo)
+#   SKILLS_INSTALL_PATH  Custom installation path (default: $PWD/.claude/skills)
 
 set -e
 
@@ -36,13 +28,15 @@ USE_CODEX_REPO_PATH=false
 USE_SYMLINK=false
 USE_SYMLINK_FORCE=false
 
-# Script directory (where this script is located)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SKILLS_SOURCE_DIR="$SCRIPT_DIR/skills"
+# Skills source (set from first positional argument)
+SKILLS_SOURCE_DIR=""
 
 # Skills to install
 INSTALL_ALL=true
 SPECIFIC_SKILLS=()
+
+# Self-install flag
+DO_SELF_INSTALL=false
 
 # Functions
 print_info() {
@@ -58,15 +52,21 @@ print_error() {
 }
 
 show_help() {
-    cat << EOF
-Install skills to a project directory
+    cat << 'EOF'
+add-skill - Install skills from a local repository to a project directory
 
 Usage:
-  ./install-skills.sh [options]
+  add-skill <skills-repo-path> [options]
+  add-skill --install
+  add-skill --help
+
+Arguments:
+  <skills-repo-path>    Path to a local skills repository containing a skills/ directory
 
 Options:
   --help              Show this help message
-  --list              List available skills
+  --install           Install add-skill itself to ~/.local/bin (symlink)
+  --list              List available skills in the repository
   --all               Install all skills (default)
   --skill <name>      Install specific skill(s) (can be used multiple times)
   --symlink           Create symlinks instead of copying (enables automatic updates)
@@ -75,38 +75,38 @@ Options:
   --codex-repo        Install to Codex repository-level path (./.codex/skills)
 
 Environment Variables:
-  SKILLS_INSTALL_PATH  Custom installation path (default: \$PWD/.claude/skills, ~/.codex/skills with --codex, or ./.codex/skills with --codex-repo)
+  SKILLS_INSTALL_PATH  Custom installation path (default: $PWD/.claude/skills, ~/.codex/skills with --codex, or ./.codex/skills with --codex-repo)
 
 Examples:
-  # Install all skills to default location (copy mode)
-  ./install-skills.sh
+  # Install add-skill command to PATH
+  add-skill --install
+
+  # List available skills in a repository
+  add-skill ~/my-skills-repo --list
+
+  # Install all skills from a repository (copy mode)
+  add-skill ~/my-skills-repo
 
   # Install with symlinks (recommended for development)
-  ./install-skills.sh --symlink --all
+  add-skill ~/my-skills-repo --symlink --all
 
   # Install with symlinks, forcefully overwriting existing files
-  ./install-skills.sh --symlink-force --all
-
-  # List available skills
-  ./install-skills.sh --list
-
-  # Install all skills to custom location
-  SKILLS_INSTALL_PATH=/path/to/project/.claude/skills ./install-skills.sh
+  add-skill ~/my-skills-repo --symlink-force --all
 
   # Install specific skills with symlinks
-  ./install-skills.sh --symlink --skill my-skill --skill another-skill
+  add-skill ~/my-skills-repo --symlink --skill my-skill --skill another-skill
 
-  # Install to custom path with specific skill
-  SKILLS_INSTALL_PATH=/path/to/project ./install-skills.sh --skill my-skill
+  # Install to custom path
+  SKILLS_INSTALL_PATH=/path/to/project/.claude/skills add-skill ~/my-skills-repo
 
   # Install for Codex (global) with symlinks
-  ./install-skills.sh --symlink --codex --all
+  add-skill ~/my-skills-repo --symlink --codex --all
 
   # Install for Codex (repository-level) with symlinks
-  ./install-skills.sh --symlink --codex-repo --all
+  add-skill ~/my-skills-repo --symlink --codex-repo --all
 
 Note:
-  When using --symlink, the skills will reference this repository directly.
+  When using --symlink, the skills will reference the source repository directly.
   Any updates to the repository (e.g., git pull) will be immediately reflected
   in all installations. This is useful for development and keeping skills up-to-date.
 
@@ -117,6 +117,45 @@ Note:
     --codex:      ~/.codex/skills (user-level, lower precedence)
 
 EOF
+}
+
+# Install add-skill itself to ~/.local/bin
+self_install() {
+    local script_path
+    script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+    local install_dir="$HOME/.local/bin"
+    local install_path="$install_dir/add-skill"
+
+    print_info "Installing add-skill to $install_path..."
+
+    mkdir -p "$install_dir"
+
+    if [ -e "$install_path" ] || [ -L "$install_path" ]; then
+        print_warn "Removing existing: $install_path"
+        rm -f "$install_path"
+    fi
+
+    ln -s "$script_path" "$install_path"
+    print_info "Symlinked: $install_path -> $script_path"
+
+    # Check if ~/.local/bin is in PATH
+    if ! echo "$PATH" | tr ':' '\n' | grep -qx "$install_dir"; then
+        echo ""
+        print_warn "$install_dir is not in your PATH"
+        echo "  Add the following to your shell configuration:"
+        echo ""
+        echo "  # For bash (~/.bashrc):"
+        echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+        echo ""
+        echo "  # For zsh (~/.zshrc):"
+        echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+        echo ""
+        echo "  # For fish (~/.config/fish/config.fish):"
+        echo "  fish_add_path \$HOME/.local/bin"
+        echo ""
+    else
+        print_info "add-skill is now available in your PATH"
+    fi
 }
 
 list_available_skills() {
@@ -177,15 +216,12 @@ install_skill() {
         print_info "Creating symlink for $skill_name..."
 
         if [ "$USE_SYMLINK_FORCE" = true ]; then
-            # Use force flag
             ln -fs "$source_path" "$dest_path"
             print_info "✓ Symlinked $skill_name (forced): $dest_path -> $source_path"
         else
-            # Try without force flag first
             if ln -s "$source_path" "$dest_path" 2>/dev/null; then
                 print_info "✓ Symlinked $skill_name: $dest_path -> $source_path"
             else
-                # If it fails, ask user for confirmation to use force
                 print_warn "Failed to create symlink for $skill_name"
                 echo -e "${YELLOW}[?]${NC} A file or directory already exists at: $dest_path"
                 echo -e "${YELLOW}[?]${NC} Do you want to force overwrite it? (y/N): "
@@ -208,15 +244,21 @@ install_skill() {
 }
 
 # Parse arguments
+# First pass: extract --help and --install before positional arg
+DO_LIST=false
 while [[ $# -gt 0 ]]; do
     case $1 in
         --help)
             show_help
             exit 0
             ;;
+        --install)
+            DO_SELF_INSTALL=true
+            shift
+            ;;
         --list)
-            list_available_skills
-            exit 0
+            DO_LIST=true
+            shift
             ;;
         --all)
             INSTALL_ALL=true
@@ -248,14 +290,49 @@ while [[ $# -gt 0 ]]; do
             SPECIFIC_SKILLS+=("$2")
             shift 2
             ;;
-        *)
+        -*)
             print_error "Unknown option: $1"
             echo ""
             show_help
             exit 1
             ;;
-esac
+        *)
+            # Positional argument: skills repo path
+            if [ -z "$SKILLS_SOURCE_DIR" ]; then
+                SKILLS_SOURCE_DIR="$(cd "$1" 2>/dev/null && pwd)/skills" || {
+                    print_error "Invalid path: $1"
+                    exit 1
+                }
+            else
+                print_error "Unexpected argument: $1"
+                exit 1
+            fi
+            shift
+            ;;
+    esac
 done
+
+# Handle self-install
+if [ "$DO_SELF_INSTALL" = true ]; then
+    self_install
+    exit 0
+fi
+
+# Require skills repo path for all other operations
+if [ -z "$SKILLS_SOURCE_DIR" ]; then
+    print_error "Missing required argument: <skills-repo-path>"
+    echo ""
+    echo "Usage: add-skill <skills-repo-path> [options]"
+    echo "       add-skill --install"
+    echo "       add-skill --help"
+    exit 1
+fi
+
+# Handle --list
+if [ "$DO_LIST" = true ]; then
+    list_available_skills
+    exit 0
+fi
 
 # Resolve installation path after parsing flags/environment
 if [ "$USE_CODEX_PATH" = true ]; then
@@ -272,12 +349,14 @@ echo "╔═══════════════════════�
 echo "║       Skills Installation                          ║"
 echo "╚════════════════════════════════════════════════════╝"
 echo ""
-print_info "Installation path: $INSTALL_PATH"
+print_info "Source: $SKILLS_SOURCE_DIR"
+print_info "Destination: $INSTALL_PATH"
 echo ""
 
 # Check if source directory exists
 if [ ! -d "$SKILLS_SOURCE_DIR" ]; then
     print_error "Skills source directory not found: $SKILLS_SOURCE_DIR"
+    echo "  Make sure the repository has a skills/ directory"
     exit 1
 fi
 
@@ -327,17 +406,15 @@ echo ""
 if [ "$USE_SYMLINK_FORCE" = true ]; then
     print_info "Installation mode: Symlink (force)"
     echo ""
-    echo "  Skills are symlinked from: $SCRIPT_DIR/skills"
+    echo "  Skills are symlinked from: $SKILLS_SOURCE_DIR"
     echo "  → Existing files were forcefully overwritten"
-    echo "  → Any updates to the repository will be automatically reflected"
-    echo "  → Run 'git pull' in $SCRIPT_DIR to update skills"
+    echo "  → Any updates to the source repository will be automatically reflected"
     echo ""
 elif [ "$USE_SYMLINK" = true ]; then
     print_info "Installation mode: Symlink"
     echo ""
-    echo "  Skills are symlinked from: $SCRIPT_DIR/skills"
-    echo "  → Any updates to the repository will be automatically reflected"
-    echo "  → Run 'git pull' in $SCRIPT_DIR to update skills"
+    echo "  Skills are symlinked from: $SKILLS_SOURCE_DIR"
+    echo "  → Any updates to the source repository will be automatically reflected"
     echo ""
 else
     print_info "Installation mode: Copy"
@@ -346,22 +423,3 @@ else
     echo "  → To enable automatic updates, reinstall with --symlink flag"
     echo ""
 fi
-
-print_info "Next steps:"
-echo ""
-echo "  Choose ONE of the following methods to use these skills:"
-echo ""
-echo "  Option 1: Direct use (Recommended for single project)"
-echo "    → Skills in .claude/skills/ are automatically detected"
-echo "    → No additional configuration needed"
-echo ""
-echo "  Option 2: Plugin installation (Recommended for multiple projects)"
-echo "    → In Claude Code, run: /plugin install $SCRIPT_DIR"
-echo "    → Makes skills available across projects"
-echo ""
-echo "  Option 3: Team-wide marketplace (Advanced)"
-echo "    → Add to .claude/settings.json in your project:"
-echo "    → See README.md for detailed instructions"
-echo ""
-print_info "Next: Check each skill's SKILL.md for specific dependencies and setup"
-echo ""
