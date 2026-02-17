@@ -22,9 +22,13 @@ NC='\033[0m' # No Color
 DEFAULT_INSTALL_PATH="$PWD/.claude/skills"
 CODEX_INSTALL_PATH="$HOME/.codex/skills"
 CODEX_REPO_INSTALL_PATH="$PWD/.codex/skills"
+KIRO_INSTALL_PATH="$HOME/.kiro/skills"
+KIRO_REPO_INSTALL_PATH="$PWD/.kiro/skills"
 INSTALL_PATH="$DEFAULT_INSTALL_PATH"
 USE_CODEX_PATH=false
 USE_CODEX_REPO_PATH=false
+USE_KIRO_PATH=false
+USE_KIRO_REPO_PATH=false
 USE_SYMLINK=false
 USE_SYMLINK_FORCE=false
 
@@ -73,9 +77,11 @@ Options:
   --symlink-force     Create symlinks with force flag (overwrite existing files without prompt)
   --codex             Install to Codex global skills path (~/.codex/skills)
   --codex-repo        Install to Codex repository-level path (./.codex/skills)
+  --kiro              Install to Kiro global skills path (~/.kiro/skills)
+  --kiro-repo         Install to Kiro repository-level path (./.kiro/skills)
 
 Environment Variables:
-  SKILLS_INSTALL_PATH  Custom installation path (default: $PWD/.claude/skills, ~/.codex/skills with --codex, or ./.codex/skills with --codex-repo)
+  SKILLS_INSTALL_PATH  Custom installation path (default: $PWD/.claude/skills, ~/.codex/skills with --codex, ./.codex/skills with --codex-repo, ~/.kiro/skills with --kiro, or ./.kiro/skills with --kiro-repo)
 
 Examples:
   # Install add-skill command to PATH
@@ -105,6 +111,12 @@ Examples:
   # Install for Codex (repository-level) with symlinks
   add-skill ~/my-skills-repo --symlink --codex-repo --all
 
+  # Install for Kiro (global) with symlinks
+  add-skill ~/my-skills-repo --symlink --kiro --all
+
+  # Install for Kiro (repository-level) with symlinks
+  add-skill ~/my-skills-repo --symlink --kiro-repo --all
+
 Note:
   When using --symlink, the skills will reference the source repository directly.
   Any updates to the repository (e.g., git pull) will be immediately reflected
@@ -115,6 +127,10 @@ Note:
   Codex skill locations (in order of precedence):
     --codex-repo: ./.codex/skills (repository-level, highest precedence)
     --codex:      ~/.codex/skills (user-level, lower precedence)
+
+  Kiro skill locations (in order of precedence):
+    --kiro-repo:  ./.kiro/skills  (repository-level, highest precedence)
+    --kiro:       ~/.kiro/skills  (user-level, lower precedence)
 
 EOF
 }
@@ -281,6 +297,14 @@ while [[ $# -gt 0 ]]; do
             USE_CODEX_REPO_PATH=true
             shift
             ;;
+        --kiro)
+            USE_KIRO_PATH=true
+            shift
+            ;;
+        --kiro-repo)
+            USE_KIRO_REPO_PATH=true
+            shift
+            ;;
         --skill)
             INSTALL_ALL=false
             if [ -z "$2" ] || [[ "$2" == --* ]]; then
@@ -339,6 +363,10 @@ if [ "$USE_CODEX_PATH" = true ]; then
     INSTALL_PATH="${SKILLS_INSTALL_PATH:-$CODEX_INSTALL_PATH}"
 elif [ "$USE_CODEX_REPO_PATH" = true ]; then
     INSTALL_PATH="${SKILLS_INSTALL_PATH:-$CODEX_REPO_INSTALL_PATH}"
+elif [ "$USE_KIRO_PATH" = true ]; then
+    INSTALL_PATH="${SKILLS_INSTALL_PATH:-$KIRO_INSTALL_PATH}"
+elif [ "$USE_KIRO_REPO_PATH" = true ]; then
+    INSTALL_PATH="${SKILLS_INSTALL_PATH:-$KIRO_REPO_INSTALL_PATH}"
 else
     INSTALL_PATH="${SKILLS_INSTALL_PATH:-$DEFAULT_INSTALL_PATH}"
 fi

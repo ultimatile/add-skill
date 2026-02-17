@@ -206,6 +206,43 @@ Notes:
 
 **Important**: The skill path format is `"./skills/skill-name"` where `skill-name` matches the directory name under `skills/`.
 
+## Using with Kiro
+
+Kiro loads skills from multiple locations with different precedence levels. To install this repository's skills for Kiro:
+
+1. Install the skills to Kiro's path:
+
+   ```bash
+   # Option A: Repository-level (highest precedence, recommended for team use)
+   ./install-skills.sh --kiro-repo --all
+
+   # Option B: User-level (global, lower precedence)
+   ./install-skills.sh --kiro --all
+
+   # Option C: With symlinks (recommended for development)
+   ./install-skills.sh --symlink --kiro-repo --all
+   ```
+
+2. Restart Kiro so it reloads the newly installed skills.
+
+### Kiro Skill Locations
+
+Kiro loads skills from these locations in order of precedence (high to low):
+
+| Option | Location | Precedence | Use Case |
+|--------|----------|------------|----------|
+| `--kiro-repo` | `./.kiro/skills` | High | Repository-specific skills, team collaboration |
+| `--kiro` | `~/.kiro/skills` | Low | User-specific skills, personal use |
+
+**Recommendations:**
+- Use `--kiro-repo` for team-shared skills that should be available to everyone working on the repository
+- Use `--kiro` for personal skills that apply across all your projects
+- Use `--symlink` with either option to enable automatic updates when you `git pull`
+
+Notes:
+- Repository-level skills (`./.kiro/skills`) override user-level skills with the same name
+- Using `--symlink` allows automatic updates when you `git pull` in the repository
+
 ## Skill Design Principles
 
 1. **Concise descriptions** - The context window is shared
