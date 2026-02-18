@@ -12,6 +12,8 @@
 
 set -e
 
+VERSION="0.1.0"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -69,6 +71,7 @@ Arguments:
 
 Options:
   --help              Show this help message
+  --version, -v       Show version
   --install           Install add-skill itself to ~/.local/bin (symlink)
   --list              List available skills in the repository
   --all               Install all skills (default)
@@ -262,6 +265,10 @@ while [[ $# -gt 0 ]]; do
 	case $1 in
 	--help)
 		show_help
+		exit 0
+		;;
+	--version | -v)
+		echo "add-skill $VERSION"
 		exit 0
 		;;
 	--install)
