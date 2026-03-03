@@ -12,7 +12,7 @@
 
 set -e
 
-VERSION="0.1.0"
+VERSION="0.2.0"
 
 # Colors for output
 RED='\033[0;31m'
@@ -36,6 +36,11 @@ USE_SYMLINK_FORCE=false
 
 # Skills source (set from first positional argument)
 SKILLS_SOURCE_DIR=""
+
+# Single-skill repo mode: true when the repo root itself contains SKILL.md
+SINGLE_SKILL_REPO=false
+SINGLE_SKILL_NAME=""
+SINGLE_SKILL_PATH=""
 
 # Skills to install
 INSTALL_ALL=true
@@ -178,6 +183,16 @@ list_available_skills() {
 	print_info "Available skills in $SKILLS_SOURCE_DIR:"
 	echo ""
 
+	# Single-skill repo: the repo root itself is the skill
+	if [ "$SINGLE_SKILL_REPO" = true ]; then
+		local description
+		description=$(awk '/^---$/,/^---$/{if(/^description:/) {sub(/^description: */, ""); print; exit}}' "$SINGLE_SKILL_PATH/SKILL.md")
+		echo "  • $SINGLE_SKILL_NAME"
+		[ -n "$description" ] && echo "    $description"
+		echo ""
+		return 0
+	fi
+
 	if [ ! -d "$SKILLS_SOURCE_DIR" ]; then
 		print_error "Skills directory not found: $SKILLS_SOURCE_DIR"
 		return 1
@@ -209,7 +224,13 @@ list_available_skills() {
 
 install_skill() {
 	local skill_name=$1
-	local source_path="$SKILLS_SOURCE_DIR/$skill_name"
+	local source_path
+	# In single-skill mode the source is the repo root, not a subdirectory
+	if [ "$SINGLE_SKILL_REPO" = true ]; then
+		source_path="$SINGLE_SKILL_PATH"
+	else
+		source_path="$SKILLS_SOURCE_DIR/$skill_name"
+	fi
 	local dest_path="$INSTALL_PATH/$skill_name"
 
 	if [ ! -d "$source_path" ]; then
@@ -326,10 +347,19 @@ while [[ $# -gt 0 ]]; do
 	*)
 		# Positional argument: skills repo path
 		if [ -z "$SKILLS_SOURCE_DIR" ]; then
-			SKILLS_SOURCE_DIR="$(cd "$1" 2>/dev/null && pwd)/skills" || {
+			repo_root="$(cd "$1" 2>/dev/null && pwd)" || {
 				print_error "Invalid path: $1"
 				exit 1
 			}
+			# If SKILL.md exists at repo root, treat the repo itself as a single skill
+			if [ -f "$repo_root/SKILL.md" ]; then
+				SINGLE_SKILL_REPO=true
+				SINGLE_SKILL_NAME="$(basename "$repo_root")"
+				SINGLE_SKILL_PATH="$repo_root"
+				SKILLS_SOURCE_DIR="$repo_root"
+			else
+				SKILLS_SOURCE_DIR="$repo_root/skills"
+			fi
 		else
 			print_error "Unexpected argument: $1"
 			exit 1
@@ -396,23 +426,28 @@ if [ "$INSTALL_ALL" = true ]; then
 	print_info "Installing all skills..."
 	echo ""
 
-	# Find all directories with SKILL.md
-	skill_count=0
-	for skill_dir in "$SKILLS_SOURCE_DIR"/*/; do
-		if [ -d "$skill_dir" ]; then
-			skill_name=$(basename "$skill_dir")
-			if [ -f "$skill_dir/SKILL.md" ]; then
-				install_skill "$skill_name"
-				skill_count=$((skill_count + 1))
-			else
-				print_warn "Skipping $skill_name (no SKILL.md found)"
+	if [ "$SINGLE_SKILL_REPO" = true ]; then
+		# Single-skill repo: install the one skill at the repo root
+		install_skill "$SINGLE_SKILL_NAME"
+	else
+		# Find all directories with SKILL.md
+		skill_count=0
+		for skill_dir in "$SKILLS_SOURCE_DIR"/*/; do
+			if [ -d "$skill_dir" ]; then
+				skill_name=$(basename "$skill_dir")
+				if [ -f "$skill_dir/SKILL.md" ]; then
+					install_skill "$skill_name"
+					skill_count=$((skill_count + 1))
+				else
+					print_warn "Skipping $skill_name (no SKILL.md found)"
+				fi
 			fi
-		fi
-	done
+		done
 
-	if [ $skill_count -eq 0 ]; then
-		print_error "No valid skills found in $SKILLS_SOURCE_DIR"
-		exit 1
+		if [ $skill_count -eq 0 ]; then
+			print_error "No valid skills found in $SKILLS_SOURCE_DIR"
+			exit 1
+		fi
 	fi
 else
 	# Install specific skills
@@ -421,9 +456,14 @@ else
 		exit 1
 	fi
 
-	for skill_name in "${SPECIFIC_SKILLS[@]}"; do
-		install_skill "$skill_name"
-	done
+	# In single-skill mode, ignore --skill names and install the repo's own skill
+	if [ "$SINGLE_SKILL_REPO" = true ]; then
+		install_skill "$SINGLE_SKILL_NAME"
+	else
+		for skill_name in "${SPECIFIC_SKILLS[@]}"; do
+			install_skill "$skill_name"
+		done
+	fi
 fi
 
 echo ""
