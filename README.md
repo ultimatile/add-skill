@@ -15,7 +15,7 @@ Install skills from a local repository to Claude Code, Codex, or Kiro CLI.
 add-skill <skills-repo-path> [options]
 ```
 
-The source repository must have a `skills/` directory containing skill subdirectories, each with a `SKILL.md`.
+The source repository must have either a `.claude-plugin/marketplace.json` (preferred), a `skills/` directory containing skill subdirectories with `SKILL.md`, or a `SKILL.md` at the repo root.
 
 ### Basic
 

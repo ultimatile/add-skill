@@ -42,6 +42,11 @@ SINGLE_SKILL_REPO=false
 SINGLE_SKILL_NAME=""
 SINGLE_SKILL_PATH=""
 
+# Marketplace mode: true when .claude-plugin/marketplace.json is found
+MARKETPLACE_MODE=false
+MARKETPLACE_SKILL_PATHS=()
+MARKETPLACE_SKILL_NAMES=()
+
 # Skills to install
 INSTALL_ALL=true
 SPECIFIC_SKILLS=()
@@ -183,6 +188,24 @@ list_available_skills() {
 	print_info "Available skills in $SKILLS_SOURCE_DIR:"
 	echo ""
 
+	# Marketplace mode: list skills from marketplace.json
+	if [ "$MARKETPLACE_MODE" = true ]; then
+		for i in "${!MARKETPLACE_SKILL_NAMES[@]}"; do
+			local skill_name="${MARKETPLACE_SKILL_NAMES[$i]}"
+			local skill_path="${MARKETPLACE_SKILL_PATHS[$i]}"
+			if [ -f "$skill_path/SKILL.md" ]; then
+				local description
+				description=$(awk '/^---$/,/^---$/{if(/^description:/) {sub(/^description: */, ""); print; exit}}' "$skill_path/SKILL.md")
+				echo "  • $skill_name"
+				[ -n "$description" ] && echo "    $description"
+			else
+				echo "  • $skill_name (SKILL.md not found)"
+			fi
+		done
+		echo ""
+		return 0
+	fi
+
 	# Single-skill repo: the repo root itself is the skill
 	if [ "$SINGLE_SKILL_REPO" = true ]; then
 		local description
@@ -225,8 +248,19 @@ list_available_skills() {
 install_skill() {
 	local skill_name=$1
 	local source_path
-	# In single-skill mode the source is the repo root, not a subdirectory
-	if [ "$SINGLE_SKILL_REPO" = true ]; then
+	# Resolve source path based on discovery mode
+	if [ "$MARKETPLACE_MODE" = true ]; then
+		for i in "${!MARKETPLACE_SKILL_NAMES[@]}"; do
+			if [ "${MARKETPLACE_SKILL_NAMES[$i]}" = "$skill_name" ]; then
+				source_path="${MARKETPLACE_SKILL_PATHS[$i]}"
+				break
+			fi
+		done
+		if [ -z "$source_path" ]; then
+			print_error "Skill '$skill_name' not found in marketplace.json"
+			return 1
+		fi
+	elif [ "$SINGLE_SKILL_REPO" = true ]; then
 		source_path="$SINGLE_SKILL_PATH"
 	else
 		source_path="$SKILLS_SOURCE_DIR/$skill_name"
@@ -351,8 +385,16 @@ while [[ $# -gt 0 ]]; do
 				print_error "Invalid path: $1"
 				exit 1
 			}
-			# If SKILL.md exists at repo root, treat the repo itself as a single skill
-			if [ -f "$repo_root/SKILL.md" ]; then
+			# Priority: marketplace.json > SKILL.md at root > skills/ directory
+			if [ -f "$repo_root/.claude-plugin/marketplace.json" ]; then
+				MARKETPLACE_MODE=true
+				SKILLS_SOURCE_DIR="$repo_root"
+				while IFS= read -r skill_path; do
+					abs_path="$repo_root/${skill_path#./}"
+					MARKETPLACE_SKILL_PATHS+=("$abs_path")
+					MARKETPLACE_SKILL_NAMES+=("$(basename "$abs_path")")
+				done < <(jq -r '.plugins[].skills[]' "$repo_root/.claude-plugin/marketplace.json")
+			elif [ -f "$repo_root/SKILL.md" ]; then
 				SINGLE_SKILL_REPO=true
 				SINGLE_SKILL_NAME="$(basename "$repo_root")"
 				SINGLE_SKILL_PATH="$repo_root"
@@ -426,7 +468,12 @@ if [ "$INSTALL_ALL" = true ]; then
 	print_info "Installing all skills..."
 	echo ""
 
-	if [ "$SINGLE_SKILL_REPO" = true ]; then
+	if [ "$MARKETPLACE_MODE" = true ]; then
+		# Marketplace mode: install skills listed in marketplace.json
+		for skill_name in "${MARKETPLACE_SKILL_NAMES[@]}"; do
+			install_skill "$skill_name"
+		done
+	elif [ "$SINGLE_SKILL_REPO" = true ]; then
 		# Single-skill repo: install the one skill at the repo root
 		install_skill "$SINGLE_SKILL_NAME"
 	else
