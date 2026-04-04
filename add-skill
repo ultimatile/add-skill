@@ -12,7 +12,7 @@
 
 set -e
 
-VERSION="0.2.0"
+VERSION="0.3.0"
 
 # Colors for output
 RED='\033[0;31m'
@@ -22,11 +22,13 @@ NC='\033[0m' # No Color
 
 # Default installation paths
 DEFAULT_INSTALL_PATH="$PWD/.claude/skills"
+GLOBAL_INSTALL_PATH="$HOME/.claude/skills"
 CODEX_INSTALL_PATH="$HOME/.codex/skills"
 CODEX_REPO_INSTALL_PATH="$PWD/.codex/skills"
 KIRO_INSTALL_PATH="$HOME/.kiro/skills"
 KIRO_REPO_INSTALL_PATH="$PWD/.kiro/skills"
 INSTALL_PATH="$DEFAULT_INSTALL_PATH"
+USE_GLOBAL_PATH=false
 USE_CODEX_PATH=false
 USE_CODEX_REPO_PATH=false
 USE_KIRO_PATH=false
@@ -56,19 +58,19 @@ DO_SELF_INSTALL=false
 
 # Functions
 print_info() {
-	echo -e "${GREEN}[INFO]${NC} $1"
+  echo -e "${GREEN}[INFO]${NC} $1"
 }
 
 print_warn() {
-	echo -e "${YELLOW}[WARN]${NC} $1"
+  echo -e "${YELLOW}[WARN]${NC} $1"
 }
 
 print_error() {
-	echo -e "${RED}[ERROR]${NC} $1"
+  echo -e "${RED}[ERROR]${NC} $1"
 }
 
 show_help() {
-	cat <<'EOF'
+  cat <<'EOF'
 add-skill - Install skills from a local repository to a project directory
 
 Usage:
@@ -88,13 +90,14 @@ Options:
   --skill <name>      Install specific skill(s) (can be used multiple times)
   --symlink           Create symlinks instead of copying (enables automatic updates)
   --symlink-force     Create symlinks with force flag (overwrite existing files without prompt)
+  --global            Install to Claude Code global skills path (~/.claude/skills)
   --codex             Install to Codex global skills path (~/.codex/skills)
   --codex-repo        Install to Codex repository-level path (./.codex/skills)
   --kiro              Install to Kiro global skills path (~/.kiro/skills)
   --kiro-repo         Install to Kiro repository-level path (./.kiro/skills)
 
 Environment Variables:
-  SKILLS_INSTALL_PATH  Custom installation path (default: $PWD/.claude/skills, ~/.codex/skills with --codex, ./.codex/skills with --codex-repo, ~/.kiro/skills with --kiro, or ./.kiro/skills with --kiro-repo)
+  SKILLS_INSTALL_PATH  Custom installation path (default: $PWD/.claude/skills, ~/.claude/skills with --global, ~/.codex/skills with --codex, ./.codex/skills with --codex-repo, ~/.kiro/skills with --kiro, or ./.kiro/skills with --kiro-repo)
 
 Examples:
   # Install add-skill command to PATH
@@ -117,6 +120,9 @@ Examples:
 
   # Install to custom path
   SKILLS_INSTALL_PATH=/path/to/project/.claude/skills add-skill ~/my-skills-repo
+
+  # Install for Claude Code (global) with symlinks
+  add-skill ~/my-skills-repo --symlink --global --all
 
   # Install for Codex (global) with symlinks
   add-skill ~/my-skills-repo --symlink --codex --all
@@ -146,304 +152,310 @@ EOF
 
 # Install add-skill itself to ~/.local/bin
 self_install() {
-	local script_path
-	script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
-	local install_dir="$HOME/.local/bin"
-	local install_path="$install_dir/add-skill"
+  local script_path
+  script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+  local install_dir="$HOME/.local/bin"
+  local install_path="$install_dir/add-skill"
 
-	print_info "Installing add-skill to $install_path..."
+  print_info "Installing add-skill to $install_path..."
 
-	mkdir -p "$install_dir"
+  mkdir -p "$install_dir"
 
-	if [ -e "$install_path" ] || [ -L "$install_path" ]; then
-		print_warn "Removing existing: $install_path"
-		rm -f "$install_path"
-	fi
+  if [ -e "$install_path" ] || [ -L "$install_path" ]; then
+    print_warn "Removing existing: $install_path"
+    rm -f "$install_path"
+  fi
 
-	ln -s "$script_path" "$install_path"
-	print_info "Symlinked: $install_path -> $script_path"
+  ln -s "$script_path" "$install_path"
+  print_info "Symlinked: $install_path -> $script_path"
 
-	# Check if ~/.local/bin is in PATH
-	if ! echo "$PATH" | tr ':' '\n' | grep -qx "$install_dir"; then
-		echo ""
-		print_warn "$install_dir is not in your PATH"
-		echo "  Add the following to your shell configuration:"
-		echo ""
-		echo "  # For bash (~/.bashrc):"
-		echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
-		echo ""
-		echo "  # For zsh (~/.zshrc):"
-		echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
-		echo ""
-		echo "  # For fish (~/.config/fish/config.fish):"
-		echo "  fish_add_path \$HOME/.local/bin"
-		echo ""
-	else
-		print_info "add-skill is now available in your PATH"
-	fi
+  # Check if ~/.local/bin is in PATH
+  if ! echo "$PATH" | tr ':' '\n' | grep -qx "$install_dir"; then
+    echo ""
+    print_warn "$install_dir is not in your PATH"
+    echo "  Add the following to your shell configuration:"
+    echo ""
+    echo "  # For bash (~/.bashrc):"
+    echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+    echo ""
+    echo "  # For zsh (~/.zshrc):"
+    echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+    echo ""
+    echo "  # For fish (~/.config/fish/config.fish):"
+    echo "  fish_add_path \$HOME/.local/bin"
+    echo ""
+  else
+    print_info "add-skill is now available in your PATH"
+  fi
 }
 
 list_available_skills() {
-	echo ""
-	print_info "Available skills in $SKILLS_SOURCE_DIR:"
-	echo ""
+  echo ""
+  print_info "Available skills in $SKILLS_SOURCE_DIR:"
+  echo ""
 
-	# Marketplace mode: list skills from marketplace.json
-	if [ "$MARKETPLACE_MODE" = true ]; then
-		for i in "${!MARKETPLACE_SKILL_NAMES[@]}"; do
-			local skill_name="${MARKETPLACE_SKILL_NAMES[$i]}"
-			local skill_path="${MARKETPLACE_SKILL_PATHS[$i]}"
-			if [ -f "$skill_path/SKILL.md" ]; then
-				local description
-				description=$(awk '/^---$/,/^---$/{if(/^description:/) {sub(/^description: */, ""); print; exit}}' "$skill_path/SKILL.md")
-				echo "  • $skill_name"
-				[ -n "$description" ] && echo "    $description"
-			else
-				echo "  • $skill_name (SKILL.md not found)"
-			fi
-		done
-		echo ""
-		return 0
-	fi
+  # Marketplace mode: list skills from marketplace.json
+  if [ "$MARKETPLACE_MODE" = true ]; then
+    for i in "${!MARKETPLACE_SKILL_NAMES[@]}"; do
+      local skill_name="${MARKETPLACE_SKILL_NAMES[$i]}"
+      local skill_path="${MARKETPLACE_SKILL_PATHS[$i]}"
+      if [ -f "$skill_path/SKILL.md" ]; then
+        local description
+        description=$(awk '/^---$/,/^---$/{if(/^description:/) {sub(/^description: */, ""); print; exit}}' "$skill_path/SKILL.md")
+        echo "  • $skill_name"
+        [ -n "$description" ] && echo "    $description"
+      else
+        echo "  • $skill_name (SKILL.md not found)"
+      fi
+    done
+    echo ""
+    return 0
+  fi
 
-	# Single-skill repo: the repo root itself is the skill
-	if [ "$SINGLE_SKILL_REPO" = true ]; then
-		local description
-		description=$(awk '/^---$/,/^---$/{if(/^description:/) {sub(/^description: */, ""); print; exit}}' "$SINGLE_SKILL_PATH/SKILL.md")
-		echo "  • $SINGLE_SKILL_NAME"
-		[ -n "$description" ] && echo "    $description"
-		echo ""
-		return 0
-	fi
+  # Single-skill repo: the repo root itself is the skill
+  if [ "$SINGLE_SKILL_REPO" = true ]; then
+    local description
+    description=$(awk '/^---$/,/^---$/{if(/^description:/) {sub(/^description: */, ""); print; exit}}' "$SINGLE_SKILL_PATH/SKILL.md")
+    echo "  • $SINGLE_SKILL_NAME"
+    [ -n "$description" ] && echo "    $description"
+    echo ""
+    return 0
+  fi
 
-	if [ ! -d "$SKILLS_SOURCE_DIR" ]; then
-		print_error "Skills directory not found: $SKILLS_SOURCE_DIR"
-		return 1
-	fi
+  if [ ! -d "$SKILLS_SOURCE_DIR" ]; then
+    print_error "Skills directory not found: $SKILLS_SOURCE_DIR"
+    return 1
+  fi
 
-	local found=false
-	for skill_dir in "$SKILLS_SOURCE_DIR"/*/; do
-		if [ -d "$skill_dir" ]; then
-			local skill_name=$(basename "$skill_dir")
-			if [ -f "$skill_dir/SKILL.md" ]; then
-				# Extract description from YAML frontmatter if available
-				local description=$(awk '/^---$/,/^---$/{if(/^description:/) {sub(/^description: */, ""); print; exit}}' "$skill_dir/SKILL.md")
-				if [ -n "$description" ]; then
-					echo "  • $skill_name"
-					echo "    $description"
-				else
-					echo "  • $skill_name"
-				fi
-				found=true
-			fi
-		fi
-	done
+  local found=false
+  for skill_dir in "$SKILLS_SOURCE_DIR"/*/; do
+    if [ -d "$skill_dir" ]; then
+      local skill_name=$(basename "$skill_dir")
+      if [ -f "$skill_dir/SKILL.md" ]; then
+        # Extract description from YAML frontmatter if available
+        local description=$(awk '/^---$/,/^---$/{if(/^description:/) {sub(/^description: */, ""); print; exit}}' "$skill_dir/SKILL.md")
+        if [ -n "$description" ]; then
+          echo "  • $skill_name"
+          echo "    $description"
+        else
+          echo "  • $skill_name"
+        fi
+        found=true
+      fi
+    fi
+  done
 
-	if [ "$found" = false ]; then
-		print_warn "No skills found (no SKILL.md files)"
-	fi
-	echo ""
+  if [ "$found" = false ]; then
+    print_warn "No skills found (no SKILL.md files)"
+  fi
+  echo ""
 }
 
 install_skill() {
-	local skill_name=$1
-	local source_path
-	# Resolve source path based on discovery mode
-	if [ "$MARKETPLACE_MODE" = true ]; then
-		for i in "${!MARKETPLACE_SKILL_NAMES[@]}"; do
-			if [ "${MARKETPLACE_SKILL_NAMES[$i]}" = "$skill_name" ]; then
-				source_path="${MARKETPLACE_SKILL_PATHS[$i]}"
-				break
-			fi
-		done
-		if [ -z "$source_path" ]; then
-			print_error "Skill '$skill_name' not found in marketplace.json"
-			return 1
-		fi
-	elif [ "$SINGLE_SKILL_REPO" = true ]; then
-		source_path="$SINGLE_SKILL_PATH"
-	else
-		source_path="$SKILLS_SOURCE_DIR/$skill_name"
-	fi
-	local dest_path="$INSTALL_PATH/$skill_name"
+  local skill_name=$1
+  local source_path
+  # Resolve source path based on discovery mode
+  if [ "$MARKETPLACE_MODE" = true ]; then
+    for i in "${!MARKETPLACE_SKILL_NAMES[@]}"; do
+      if [ "${MARKETPLACE_SKILL_NAMES[$i]}" = "$skill_name" ]; then
+        source_path="${MARKETPLACE_SKILL_PATHS[$i]}"
+        break
+      fi
+    done
+    if [ -z "$source_path" ]; then
+      print_error "Skill '$skill_name' not found in marketplace.json"
+      return 1
+    fi
+  elif [ "$SINGLE_SKILL_REPO" = true ]; then
+    source_path="$SINGLE_SKILL_PATH"
+  else
+    source_path="$SKILLS_SOURCE_DIR/$skill_name"
+  fi
+  local dest_path="$INSTALL_PATH/$skill_name"
 
-	if [ ! -d "$source_path" ]; then
-		print_error "Skill not found: $skill_name"
-		return 1
-	fi
+  if [ ! -d "$source_path" ]; then
+    print_error "Skill not found: $skill_name"
+    return 1
+  fi
 
-	# Create destination directory
-	mkdir -p "$INSTALL_PATH"
+  # Create destination directory
+  mkdir -p "$INSTALL_PATH"
 
-	# Remove existing installation if present (handles both directories and symlinks)
-	if [ -e "$dest_path" ] || [ -L "$dest_path" ]; then
-		print_warn "Removing existing installation: $dest_path"
-		rm -rf "$dest_path"
-	fi
+  # Remove existing installation if present (handles both directories and symlinks)
+  if [ -e "$dest_path" ] || [ -L "$dest_path" ]; then
+    print_warn "Removing existing installation: $dest_path"
+    rm -rf "$dest_path"
+  fi
 
-	if [ "$USE_SYMLINK" = true ] || [ "$USE_SYMLINK_FORCE" = true ]; then
-		# Create symlink with absolute path
-		print_info "Creating symlink for $skill_name..."
+  if [ "$USE_SYMLINK" = true ] || [ "$USE_SYMLINK_FORCE" = true ]; then
+    # Create symlink with absolute path
+    print_info "Creating symlink for $skill_name..."
 
-		if [ "$USE_SYMLINK_FORCE" = true ]; then
-			ln -fs "$source_path" "$dest_path"
-			print_info "✓ Symlinked $skill_name (forced): $dest_path -> $source_path"
-		else
-			if ln -s "$source_path" "$dest_path" 2>/dev/null; then
-				print_info "✓ Symlinked $skill_name: $dest_path -> $source_path"
-			else
-				print_warn "Failed to create symlink for $skill_name"
-				echo -e "${YELLOW}[?]${NC} A file or directory already exists at: $dest_path"
-				echo -e "${YELLOW}[?]${NC} Do you want to force overwrite it? (y/N): "
-				read -r response
-				if [[ "$response" =~ ^[Yy]$ ]]; then
-					ln -fs "$source_path" "$dest_path"
-					print_info "✓ Symlinked $skill_name (forced): $dest_path -> $source_path"
-				else
-					print_error "Skipped $skill_name - user declined to overwrite"
-					return 1
-				fi
-			fi
-		fi
-	else
-		# Copy skill
-		print_info "Installing $skill_name..."
-		cp -r "$source_path" "$dest_path"
-		print_info "✓ Installed $skill_name to $dest_path"
-	fi
+    if [ "$USE_SYMLINK_FORCE" = true ]; then
+      ln -fs "$source_path" "$dest_path"
+      print_info "✓ Symlinked $skill_name (forced): $dest_path -> $source_path"
+    else
+      if ln -s "$source_path" "$dest_path" 2>/dev/null; then
+        print_info "✓ Symlinked $skill_name: $dest_path -> $source_path"
+      else
+        print_warn "Failed to create symlink for $skill_name"
+        echo -e "${YELLOW}[?]${NC} A file or directory already exists at: $dest_path"
+        echo -e "${YELLOW}[?]${NC} Do you want to force overwrite it? (y/N): "
+        read -r response
+        if [[ "$response" =~ ^[Yy]$ ]]; then
+          ln -fs "$source_path" "$dest_path"
+          print_info "✓ Symlinked $skill_name (forced): $dest_path -> $source_path"
+        else
+          print_error "Skipped $skill_name - user declined to overwrite"
+          return 1
+        fi
+      fi
+    fi
+  else
+    # Copy skill
+    print_info "Installing $skill_name..."
+    cp -r "$source_path" "$dest_path"
+    print_info "✓ Installed $skill_name to $dest_path"
+  fi
 }
 
 # Parse arguments
 # First pass: extract --help and --install before positional arg
 DO_LIST=false
 while [[ $# -gt 0 ]]; do
-	case $1 in
-	--help)
-		show_help
-		exit 0
-		;;
-	--version | -v)
-		echo "add-skill $VERSION"
-		exit 0
-		;;
-	--install)
-		DO_SELF_INSTALL=true
-		shift
-		;;
-	--list)
-		DO_LIST=true
-		shift
-		;;
-	--all)
-		INSTALL_ALL=true
-		shift
-		;;
-	--symlink)
-		USE_SYMLINK=true
-		shift
-		;;
-	--symlink-force)
-		USE_SYMLINK_FORCE=true
-		USE_SYMLINK=true
-		shift
-		;;
-	--codex)
-		USE_CODEX_PATH=true
-		shift
-		;;
-	--codex-repo)
-		USE_CODEX_REPO_PATH=true
-		shift
-		;;
-	--kiro)
-		USE_KIRO_PATH=true
-		shift
-		;;
-	--kiro-repo)
-		USE_KIRO_REPO_PATH=true
-		shift
-		;;
-	--skill)
-		INSTALL_ALL=false
-		if [ -z "$2" ] || [[ "$2" == --* ]]; then
-			print_error "--skill requires a skill name"
-			exit 1
-		fi
-		SPECIFIC_SKILLS+=("$2")
-		shift 2
-		;;
-	-*)
-		print_error "Unknown option: $1"
-		echo ""
-		show_help
-		exit 1
-		;;
-	*)
-		# Positional argument: skills repo path
-		if [ -z "$SKILLS_SOURCE_DIR" ]; then
-			repo_root="$(cd "$1" 2>/dev/null && pwd)" || {
-				print_error "Invalid path: $1"
-				exit 1
-			}
-			# Priority: marketplace.json > SKILL.md at root > skills/ directory
-			if [ -f "$repo_root/.claude-plugin/marketplace.json" ]; then
-				MARKETPLACE_MODE=true
-				SKILLS_SOURCE_DIR="$repo_root"
-				while IFS= read -r skill_path; do
-					abs_path="$repo_root/${skill_path#./}"
-					MARKETPLACE_SKILL_PATHS+=("$abs_path")
-					MARKETPLACE_SKILL_NAMES+=("$(basename "$abs_path")")
-				done < <(jq -r '.plugins[].skills[]' "$repo_root/.claude-plugin/marketplace.json")
-			elif [ -f "$repo_root/SKILL.md" ]; then
-				SINGLE_SKILL_REPO=true
-				SINGLE_SKILL_NAME="$(basename "$repo_root")"
-				SINGLE_SKILL_PATH="$repo_root"
-				SKILLS_SOURCE_DIR="$repo_root"
-			else
-				SKILLS_SOURCE_DIR="$repo_root/skills"
-			fi
-		else
-			print_error "Unexpected argument: $1"
-			exit 1
-		fi
-		shift
-		;;
-	esac
+  case $1 in
+  --help)
+    show_help
+    exit 0
+    ;;
+  --version | -v)
+    echo "add-skill $VERSION"
+    exit 0
+    ;;
+  --install)
+    DO_SELF_INSTALL=true
+    shift
+    ;;
+  --list)
+    DO_LIST=true
+    shift
+    ;;
+  --all)
+    INSTALL_ALL=true
+    shift
+    ;;
+  --symlink)
+    USE_SYMLINK=true
+    shift
+    ;;
+  --symlink-force)
+    USE_SYMLINK_FORCE=true
+    USE_SYMLINK=true
+    shift
+    ;;
+  --global)
+    USE_GLOBAL_PATH=true
+    shift
+    ;;
+  --codex)
+    USE_CODEX_PATH=true
+    shift
+    ;;
+  --codex-repo)
+    USE_CODEX_REPO_PATH=true
+    shift
+    ;;
+  --kiro)
+    USE_KIRO_PATH=true
+    shift
+    ;;
+  --kiro-repo)
+    USE_KIRO_REPO_PATH=true
+    shift
+    ;;
+  --skill)
+    INSTALL_ALL=false
+    if [ -z "$2" ] || [[ "$2" == --* ]]; then
+      print_error "--skill requires a skill name"
+      exit 1
+    fi
+    SPECIFIC_SKILLS+=("$2")
+    shift 2
+    ;;
+  -*)
+    print_error "Unknown option: $1"
+    echo ""
+    show_help
+    exit 1
+    ;;
+  *)
+    # Positional argument: skills repo path
+    if [ -z "$SKILLS_SOURCE_DIR" ]; then
+      repo_root="$(cd "$1" 2>/dev/null && pwd)" || {
+        print_error "Invalid path: $1"
+        exit 1
+      }
+      # Priority: marketplace.json > SKILL.md at root > skills/ directory
+      if [ -f "$repo_root/.claude-plugin/marketplace.json" ]; then
+        MARKETPLACE_MODE=true
+        SKILLS_SOURCE_DIR="$repo_root"
+        while IFS= read -r skill_path; do
+          abs_path="$repo_root/${skill_path#./}"
+          MARKETPLACE_SKILL_PATHS+=("$abs_path")
+          MARKETPLACE_SKILL_NAMES+=("$(basename "$abs_path")")
+        done < <(jq -r '.plugins[].skills[]' "$repo_root/.claude-plugin/marketplace.json")
+      elif [ -f "$repo_root/SKILL.md" ]; then
+        SINGLE_SKILL_REPO=true
+        SINGLE_SKILL_NAME="$(basename "$repo_root")"
+        SINGLE_SKILL_PATH="$repo_root"
+        SKILLS_SOURCE_DIR="$repo_root"
+      else
+        SKILLS_SOURCE_DIR="$repo_root/skills"
+      fi
+    else
+      print_error "Unexpected argument: $1"
+      exit 1
+    fi
+    shift
+    ;;
+  esac
 done
 
 # Handle self-install
 if [ "$DO_SELF_INSTALL" = true ]; then
-	self_install
-	exit 0
+  self_install
+  exit 0
 fi
 
 # Require skills repo path for all other operations
 if [ -z "$SKILLS_SOURCE_DIR" ]; then
-	print_error "Missing required argument: <skills-repo-path>"
-	echo ""
-	echo "Usage: add-skill <skills-repo-path> [options]"
-	echo "       add-skill --install"
-	echo "       add-skill --help"
-	exit 1
+  print_error "Missing required argument: <skills-repo-path>"
+  echo ""
+  echo "Usage: add-skill <skills-repo-path> [options]"
+  echo "       add-skill --install"
+  echo "       add-skill --help"
+  exit 1
 fi
 
 # Handle --list
 if [ "$DO_LIST" = true ]; then
-	list_available_skills
-	exit 0
+  list_available_skills
+  exit 0
 fi
 
 # Resolve installation path after parsing flags/environment
-if [ "$USE_CODEX_PATH" = true ]; then
-	INSTALL_PATH="${SKILLS_INSTALL_PATH:-$CODEX_INSTALL_PATH}"
+if [ "$USE_GLOBAL_PATH" = true ]; then
+  INSTALL_PATH="${SKILLS_INSTALL_PATH:-$GLOBAL_INSTALL_PATH}"
+elif [ "$USE_CODEX_PATH" = true ]; then
+  INSTALL_PATH="${SKILLS_INSTALL_PATH:-$CODEX_INSTALL_PATH}"
 elif [ "$USE_CODEX_REPO_PATH" = true ]; then
-	INSTALL_PATH="${SKILLS_INSTALL_PATH:-$CODEX_REPO_INSTALL_PATH}"
+  INSTALL_PATH="${SKILLS_INSTALL_PATH:-$CODEX_REPO_INSTALL_PATH}"
 elif [ "$USE_KIRO_PATH" = true ]; then
-	INSTALL_PATH="${SKILLS_INSTALL_PATH:-$KIRO_INSTALL_PATH}"
+  INSTALL_PATH="${SKILLS_INSTALL_PATH:-$KIRO_INSTALL_PATH}"
 elif [ "$USE_KIRO_REPO_PATH" = true ]; then
-	INSTALL_PATH="${SKILLS_INSTALL_PATH:-$KIRO_REPO_INSTALL_PATH}"
+  INSTALL_PATH="${SKILLS_INSTALL_PATH:-$KIRO_REPO_INSTALL_PATH}"
 else
-	INSTALL_PATH="${SKILLS_INSTALL_PATH:-$DEFAULT_INSTALL_PATH}"
+  INSTALL_PATH="${SKILLS_INSTALL_PATH:-$DEFAULT_INSTALL_PATH}"
 fi
 
 # Main installation
@@ -458,59 +470,59 @@ echo ""
 
 # Check if source directory exists
 if [ ! -d "$SKILLS_SOURCE_DIR" ]; then
-	print_error "Skills source directory not found: $SKILLS_SOURCE_DIR"
-	echo "  Make sure the repository has a skills/ directory"
-	exit 1
+  print_error "Skills source directory not found: $SKILLS_SOURCE_DIR"
+  echo "  Make sure the repository has a skills/ directory"
+  exit 1
 fi
 
 # Install selected skills
 if [ "$INSTALL_ALL" = true ]; then
-	print_info "Installing all skills..."
-	echo ""
+  print_info "Installing all skills..."
+  echo ""
 
-	if [ "$MARKETPLACE_MODE" = true ]; then
-		# Marketplace mode: install skills listed in marketplace.json
-		for skill_name in "${MARKETPLACE_SKILL_NAMES[@]}"; do
-			install_skill "$skill_name"
-		done
-	elif [ "$SINGLE_SKILL_REPO" = true ]; then
-		# Single-skill repo: install the one skill at the repo root
-		install_skill "$SINGLE_SKILL_NAME"
-	else
-		# Find all directories with SKILL.md
-		skill_count=0
-		for skill_dir in "$SKILLS_SOURCE_DIR"/*/; do
-			if [ -d "$skill_dir" ]; then
-				skill_name=$(basename "$skill_dir")
-				if [ -f "$skill_dir/SKILL.md" ]; then
-					install_skill "$skill_name"
-					skill_count=$((skill_count + 1))
-				else
-					print_warn "Skipping $skill_name (no SKILL.md found)"
-				fi
-			fi
-		done
+  if [ "$MARKETPLACE_MODE" = true ]; then
+    # Marketplace mode: install skills listed in marketplace.json
+    for skill_name in "${MARKETPLACE_SKILL_NAMES[@]}"; do
+      install_skill "$skill_name"
+    done
+  elif [ "$SINGLE_SKILL_REPO" = true ]; then
+    # Single-skill repo: install the one skill at the repo root
+    install_skill "$SINGLE_SKILL_NAME"
+  else
+    # Find all directories with SKILL.md
+    skill_count=0
+    for skill_dir in "$SKILLS_SOURCE_DIR"/*/; do
+      if [ -d "$skill_dir" ]; then
+        skill_name=$(basename "$skill_dir")
+        if [ -f "$skill_dir/SKILL.md" ]; then
+          install_skill "$skill_name"
+          skill_count=$((skill_count + 1))
+        else
+          print_warn "Skipping $skill_name (no SKILL.md found)"
+        fi
+      fi
+    done
 
-		if [ $skill_count -eq 0 ]; then
-			print_error "No valid skills found in $SKILLS_SOURCE_DIR"
-			exit 1
-		fi
-	fi
+    if [ $skill_count -eq 0 ]; then
+      print_error "No valid skills found in $SKILLS_SOURCE_DIR"
+      exit 1
+    fi
+  fi
 else
-	# Install specific skills
-	if [ ${#SPECIFIC_SKILLS[@]} -eq 0 ]; then
-		print_error "No skills specified. Use --skill <name> or --all"
-		exit 1
-	fi
+  # Install specific skills
+  if [ ${#SPECIFIC_SKILLS[@]} -eq 0 ]; then
+    print_error "No skills specified. Use --skill <name> or --all"
+    exit 1
+  fi
 
-	# In single-skill mode, ignore --skill names and install the repo's own skill
-	if [ "$SINGLE_SKILL_REPO" = true ]; then
-		install_skill "$SINGLE_SKILL_NAME"
-	else
-		for skill_name in "${SPECIFIC_SKILLS[@]}"; do
-			install_skill "$skill_name"
-		done
-	fi
+  # In single-skill mode, ignore --skill names and install the repo's own skill
+  if [ "$SINGLE_SKILL_REPO" = true ]; then
+    install_skill "$SINGLE_SKILL_NAME"
+  else
+    for skill_name in "${SPECIFIC_SKILLS[@]}"; do
+      install_skill "$skill_name"
+    done
+  fi
 fi
 
 echo ""
@@ -522,19 +534,19 @@ print_info "Skills installed to: $INSTALL_PATH"
 echo ""
 
 if [ "$USE_SYMLINK_FORCE" = true ]; then
-	print_info "Installation mode: Symlink (force)"
-	echo ""
-	echo "  Skills are symlinked from: $SKILLS_SOURCE_DIR"
-	echo "  → Existing files were forcefully overwritten"
-	echo ""
+  print_info "Installation mode: Symlink (force)"
+  echo ""
+  echo "  Skills are symlinked from: $SKILLS_SOURCE_DIR"
+  echo "  → Existing files were forcefully overwritten"
+  echo ""
 elif [ "$USE_SYMLINK" = true ]; then
-	print_info "Installation mode: Symlink"
-	echo ""
-	echo "  Skills are symlinked from: $SKILLS_SOURCE_DIR"
-	echo ""
+  print_info "Installation mode: Symlink"
+  echo ""
+  echo "  Skills are symlinked from: $SKILLS_SOURCE_DIR"
+  echo ""
 else
-	print_info "Installation mode: Copy"
-	echo ""
-	echo "  Skills have been copied to: $INSTALL_PATH"
-	echo ""
+  print_info "Installation mode: Copy"
+  echo ""
+  echo "  Skills have been copied to: $INSTALL_PATH"
+  echo ""
 fi

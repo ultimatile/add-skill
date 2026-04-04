@@ -40,12 +40,16 @@ By default, skills install to `./.claude/skills` (Claude Code). Use flags to tar
 | Flag | Location | Scope |
 |------|----------|-------|
 | *(default)* | `./.claude/skills` | Claude Code (project) |
+| `--global` | `~/.claude/skills` | Claude Code (global) |
 | `--codex` | `~/.codex/skills` | Codex (global) |
 | `--codex-repo` | `./.codex/skills` | Codex (project) |
 | `--kiro` | `~/.kiro/skills` | Kiro (global) |
 | `--kiro-repo` | `./.kiro/skills` | Kiro (project) |
 
 ```bash
+# Claude Code (global)
+add-skill ~/my-skills-repo --symlink --global --all
+
 # Codex (global)
 add-skill ~/my-skills-repo --symlink --codex --all
 
