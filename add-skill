@@ -12,7 +12,7 @@
 
 set -e
 
-VERSION="0.3.0"
+VERSION="0.3.1"
 
 # Colors for output
 RED='\033[0;31m'
@@ -153,7 +153,9 @@ EOF
 # Install add-skill itself to ~/.local/bin
 self_install() {
   local script_path
-  script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+  # Resolve symlinks to get the real path, avoiding self-referencing symlink
+  # when running via an already-installed symlink
+  script_path="$(cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")" && pwd)/$(basename "$(realpath "${BASH_SOURCE[0]}")")"
   local install_dir="$HOME/.local/bin"
   local install_path="$install_dir/add-skill"
 
