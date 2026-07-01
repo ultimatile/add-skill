@@ -12,7 +12,7 @@
 
 set -e
 
-VERSION="0.3.1"
+VERSION="0.4.0"
 
 # Colors for output
 RED='\033[0;31m'
@@ -20,9 +20,25 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+# Expand a leading ~ to $HOME. Environment variables assigned with quotes
+# (e.g. CLAUDE_CONFIG_DIR="~/.claude_fn") are not tilde-expanded by the shell,
+# so relative-to-home config dirs must be normalized before use.
+expand_tilde() {
+  local path="$1"
+  case "$path" in
+  "~") echo "$HOME" ;;
+  "~/"*) echo "$HOME/${path#\~/}" ;;
+  *) echo "$path" ;;
+  esac
+}
+
 # Default installation paths
 DEFAULT_INSTALL_PATH="$PWD/.claude/skills"
-GLOBAL_INSTALL_PATH="$HOME/.claude/skills"
+# Claude Code honors CLAUDE_CONFIG_DIR to relocate the user-level config
+# directory (default ~/.claude). Global skills live under its skills/ subdir,
+# so --global must follow the same override rather than assuming ~/.claude.
+CLAUDE_CONFIG_DIR="$(expand_tilde "${CLAUDE_CONFIG_DIR:-$HOME/.claude}")"
+GLOBAL_INSTALL_PATH="$CLAUDE_CONFIG_DIR/skills"
 CODEX_INSTALL_PATH="$HOME/.codex/skills"
 CODEX_REPO_INSTALL_PATH="$PWD/.codex/skills"
 KIRO_INSTALL_PATH="$HOME/.kiro/skills"
@@ -90,7 +106,7 @@ Options:
   --skill <name>      Install specific skill(s) (can be used multiple times)
   --symlink           Create symlinks instead of copying (enables automatic updates)
   --symlink-force     Create symlinks with force flag (overwrite existing files without prompt)
-  --global            Install to Claude Code global skills path (~/.claude/skills)
+  --global            Install to Claude Code global skills path (~/.claude/skills, or $CLAUDE_CONFIG_DIR/skills if set)
   --codex             Install to Codex global skills path (~/.codex/skills)
   --codex-repo        Install to Codex repository-level path (./.codex/skills)
   --kiro              Install to Kiro global skills path (~/.kiro/skills)
@@ -98,6 +114,7 @@ Options:
 
 Environment Variables:
   SKILLS_INSTALL_PATH  Custom installation path (default: $PWD/.claude/skills, ~/.claude/skills with --global, ~/.codex/skills with --codex, ./.codex/skills with --codex-repo, ~/.kiro/skills with --kiro, or ./.kiro/skills with --kiro-repo)
+  CLAUDE_CONFIG_DIR    Claude Code user config directory (default: ~/.claude); --global installs to its skills/ subdirectory
 
 Examples:
   # Install add-skill command to PATH
