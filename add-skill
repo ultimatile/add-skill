@@ -12,7 +12,7 @@
 
 set -e
 
-VERSION="0.4.1"
+VERSION="0.4.2"
 
 # Colors for output
 RED='\033[0;31m'
@@ -39,8 +39,10 @@ DEFAULT_INSTALL_PATH="$PWD/.claude/skills"
 # so --global must follow the same override rather than assuming ~/.claude.
 CLAUDE_CONFIG_DIR="$(expand_tilde "${CLAUDE_CONFIG_DIR:-$HOME/.claude}")"
 GLOBAL_INSTALL_PATH="$CLAUDE_CONFIG_DIR/skills"
-CODEX_INSTALL_PATH="$HOME/.codex/skills"
-# Repository-level Codex skills path: https://developers.openai.com/codex/skills
+# Codex discovers skills under .agents/skills at both user and repository scope;
+# ~/.codex holds only config.toml, not skills.
+# See https://learn.chatgpt.com/docs/build-skills
+CODEX_INSTALL_PATH="$HOME/.agents/skills"
 CODEX_REPO_INSTALL_PATH="$PWD/.agents/skills"
 KIRO_INSTALL_PATH="$HOME/.kiro/skills"
 KIRO_REPO_INSTALL_PATH="$PWD/.kiro/skills"
@@ -108,13 +110,13 @@ Options:
   --symlink           Create symlinks instead of copying (enables automatic updates)
   --symlink-force     Create symlinks with force flag (overwrite existing files without prompt)
   --global            Install to Claude Code global skills path (~/.claude/skills, or $CLAUDE_CONFIG_DIR/skills if set)
-  --codex             Install to Codex global skills path (~/.codex/skills)
+  --codex             Install to Codex global skills path (~/.agents/skills)
   --codex-repo        Install to Codex repository-level path (./.agents/skills)
   --kiro              Install to Kiro global skills path (~/.kiro/skills)
   --kiro-repo         Install to Kiro repository-level path (./.kiro/skills)
 
 Environment Variables:
-  SKILLS_INSTALL_PATH  Custom installation path (default: $PWD/.claude/skills, ~/.claude/skills with --global, ~/.codex/skills with --codex, ./.agents/skills with --codex-repo, ~/.kiro/skills with --kiro, or ./.kiro/skills with --kiro-repo)
+  SKILLS_INSTALL_PATH  Custom installation path (default: $PWD/.claude/skills, ~/.claude/skills with --global, ~/.agents/skills with --codex, ./.agents/skills with --codex-repo, ~/.kiro/skills with --kiro, or ./.kiro/skills with --kiro-repo)
   CLAUDE_CONFIG_DIR    Claude Code user config directory (default: ~/.claude); --global installs to its skills/ subdirectory
 
 Examples:
@@ -159,7 +161,7 @@ Examples:
 
   Codex skill locations (in order of precedence):
     --codex-repo: ./.agents/skills (repository-level, highest precedence)
-    --codex:      ~/.codex/skills (user-level, lower precedence)
+    --codex:      ~/.agents/skills (user-level, lower precedence)
 
   Kiro skill locations (in order of precedence):
     --kiro-repo:  ./.kiro/skills  (repository-level, highest precedence)
