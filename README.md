@@ -63,7 +63,7 @@ add-skill ~/my-skills-repo --symlink --kiro --all
 add-skill ~/my-skills-repo --symlink --kiro-repo --all
 ```
 
-For Codex and Kiro, project-level skills override global skills with the same name.
+Codex searches project-level locations before global ones, but same-name skills are not merged or overridden — both can show up in the skill selector. For Kiro, project-level skills override global skills with the same name.
 
 ### Symlink vs Copy
 

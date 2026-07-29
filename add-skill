@@ -159,9 +159,10 @@ Examples:
 
   Use --symlink-force when you want to overwrite existing files without being prompted.
 
-  Codex skill locations (in order of precedence):
-    --codex-repo: ./.agents/skills (repository-level, highest precedence)
-    --codex:      ~/.agents/skills (user-level, lower precedence)
+  Codex skill locations (in search order; same-name skills are not merged,
+  so both can appear in the skill selector):
+    --codex-repo: ./.agents/skills (repository-level, searched first)
+    --codex:      ~/.agents/skills (user-level, searched later)
 
   Kiro skill locations (in order of precedence):
     --kiro-repo:  ./.kiro/skills  (repository-level, highest precedence)
