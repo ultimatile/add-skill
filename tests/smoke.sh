@@ -232,6 +232,16 @@ for mode in --symlink ""; do
     test "$(readlink "$LINKED/repo/skills/alpha")" = "$LINKED/elsewhere/alpha"
 done
 
+# The other half of the guard: the destination is not the source entry but what
+# that entry points at, so removing it would empty the source from underneath.
+POINTED="$WORK/pointed"
+mkdir -p "$POINTED/repo/skills" "$POINTED/dest/alpha"
+printf -- '---\nname: alpha\ndescription: smoke fixture\n---\n' >"$POINTED/dest/alpha/SKILL.md"
+ln -s "$POINTED/dest/alpha" "$POINTED/repo/skills/alpha"
+run_at "$POINTED" "$POINTED/dest" "$WORK/o" "$WORK/e" "$POINTED/repo" --symlink
+assert_status "installing onto what the source entry points at aborts" nonzero $?
+assert_true "the pointed-at content survives" test -f "$POINTED/dest/alpha/SKILL.md"
+
 # A destination that cannot even be created is still a skill that could not be
 # installed, so it gets the same report as the ln and cp failures.
 echo "[reports a destination it cannot create]"
@@ -281,6 +291,26 @@ assert_status "--install onto its own location exits 0" zero $?
 assert_true "the script is still a regular file" test -f "$FAKE/.local/bin/add-skill"
 assert_true "the script was not replaced by a symlink" test ! -L "$FAKE/.local/bin/add-skill"
 assert_true "the script still has content" test -s "$FAKE/.local/bin/add-skill"
+
+# --install's own filesystem calls report the same way the skill path's do.
+echo "[--install reports what it could not do]"
+FAKE_LN="$WORK/home-ln"
+mkdir -p "$FAKE_LN/.local/bin" && chmod a-w "$FAKE_LN/.local/bin"
+HOME="$FAKE_LN" "$ADD_SKILL" --install </dev/null >"$WORK/o" 2>"$WORK/e"
+status=$?
+chmod u+w "$FAKE_LN/.local/bin"
+assert_status "--install aborts when it cannot link" nonzero $status
+cat "$WORK/o" "$WORK/e" >"$WORK/both"
+assert_contains "--install names the link it could not make" "$WORK/both" '\[ERROR\].*add-skill'
+
+FAKE_MK="$WORK/home-mk"
+mkdir -p "$FAKE_MK/.local" && chmod a-w "$FAKE_MK/.local"
+HOME="$FAKE_MK" "$ADD_SKILL" --install </dev/null >"$WORK/o" 2>"$WORK/e"
+status=$?
+chmod u+w "$FAKE_MK/.local"
+assert_status "--install aborts when it cannot create the directory" nonzero $status
+cat "$WORK/o" "$WORK/e" >"$WORK/both"
+assert_contains "--install names the directory it could not create" "$WORK/both" '\[ERROR\].*local/bin'
 
 # The failure path must not read from stdin. A fifo this script holds open
 # delivers nothing and never signals end of file, so anything that reads it

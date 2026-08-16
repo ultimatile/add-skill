@@ -209,7 +209,10 @@ self_install() {
     fi
   fi
 
-  ln -s "$script_path" "$install_path"
+  if ! ln -s "$script_path" "$install_path"; then
+    print_error "Failed to symlink add-skill to $install_path"
+    return 1
+  fi
   print_info "Symlinked: $install_path -> $script_path"
 
   # Check if ~/.local/bin is in PATH
