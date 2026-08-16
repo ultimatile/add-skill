@@ -228,7 +228,7 @@ EOF
 # $install_dir, including when it was already there and nothing was installed.
 report_path_state() {
   local install_dir=$1
-  if echo "$PATH" | tr ':' '\n' | grep -qx "$install_dir"; then
+  if echo "$PATH" | tr ':' '\n' | grep -Fqx "$install_dir"; then
     print_info "add-skill is now available in your PATH"
     return 0
   fi
@@ -372,6 +372,21 @@ install_skill() {
   while [ "${skill_name%/}" != "$skill_name" ]; do
     skill_name="${skill_name%/}"
   done
+
+  # A skill name names a directory directly under the source's skills/, which
+  # is the only level discovery walks. A path component would send both the
+  # source and the destination somewhere else: --skill ../x installs outside
+  # the install path and clears whatever was there.
+  case "$skill_name" in
+  "" | "." | "..")
+    print_error "Not a skill name: $1"
+    return 1
+    ;;
+  */*)
+    print_error "A skill name cannot contain a path component: $1"
+    return 1
+    ;;
+  esac
   local source_path
   # Resolve source path based on discovery mode
   if [ "$MARKETPLACE_MODE" = true ]; then

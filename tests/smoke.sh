@@ -331,10 +331,21 @@ NESTED="$WORK/nested"
 mkdir -p "$NESTED/repo/skills/sub/alpha"
 printf -- '---\nname: alpha\ndescription: smoke fixture\n---\n' >"$NESTED/repo/skills/sub/alpha/SKILL.md"
 run_at "$NESTED" "$NESTED/repo/skills" "$WORK/o" "$WORK/e" "$NESTED/repo" --symlink-force --skill sub/alpha
-assert_status "a slash-carrying skill name cannot slip past the guard" nonzero $?
+assert_status "a name with a path component is refused" nonzero $?
 assert_true "the nested source survives" test -f "$NESTED/repo/skills/sub/alpha/SKILL.md"
 cat "$WORK/o" "$WORK/e" >"$WORK/both"
-assert_contains "the guard is what stopped it" "$WORK/both" 'is or contains its own source'
+assert_contains "it says why" "$WORK/both" 'cannot contain a path component'
+
+# .. in a name sends both the source and the destination out of their roots.
+# The install path is what it escapes on the destination side.
+TRAVERSE="$WORK/traverse"
+mkdir -p "$TRAVERSE/repo/skills/alpha" "$TRAVERSE/repo/other" "$TRAVERSE/proj/dest" "$TRAVERSE/proj/other"
+printf -- '---\nname: other\ndescription: smoke fixture\n---\n' >"$TRAVERSE/repo/other/SKILL.md"
+echo mine >"$TRAVERSE/proj/other/keep.txt"
+run_at "$TRAVERSE/proj" "$TRAVERSE/proj/dest" "$WORK/o" "$WORK/e" "$TRAVERSE/repo" --symlink-force --skill ../other
+assert_status "a name climbing out of the skills directory is refused" nonzero $?
+assert_true "nothing outside the install path is touched" test -f "$TRAVERSE/proj/other/keep.txt"
+assert_true "and it is still a directory" test ! -L "$TRAVERSE/proj/other"
 
 # Containment, not just equality: a destination that is an ancestor of the
 # source would have rm -rf take the whole source tree with it.
