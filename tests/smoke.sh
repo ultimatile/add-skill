@@ -178,6 +178,15 @@ assert_false "an unresolved inner is within nothing" path_within "" /a
 # the outer becomes "" and the pattern /* matches every absolute path.
 assert_false "an unresolved outer contains nothing" path_within /a ""
 
+# The containment test builds a case pattern from the outer path. Quoting is
+# what keeps a bracket, a question mark or a star in a directory name literal;
+# without it the guard would both miss real containment and invent it.
+assert_true "a bracket in a directory name is a bracket" path_within '/a[b]/c' '/a[b]'
+assert_true "and so is a question mark" path_within '/a?c/d' '/a?c'
+assert_true "and so is a star" path_within '/a*c/d' '/a*c'
+assert_false "a name a bracket would have matched is not within it" path_within '/ab/c' '/a[b]'
+assert_false "nor one a question mark would have matched" path_within '/axc/d' '/a?c'
+
 # Identity, for the aliases text cannot see. A bind mount is the case this
 # exists for and cannot be created here; a symlink is the same shape — two
 # spellings, one inode — and does exercise the comparison.
