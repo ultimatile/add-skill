@@ -309,12 +309,29 @@ install_skill() {
   fi
 
   # Create destination directory
-  mkdir -p "$INSTALL_PATH"
+  if ! mkdir -p "$INSTALL_PATH"; then
+    print_error "Failed to create $INSTALL_PATH for $skill_name"
+    return 1
+  fi
+
+  # The removal below runs before the link or the copy, so installing a skill
+  # onto its own source would delete that source and leave the install reading
+  # from nothing. Compare resolved paths: either side can arrive relative, via a
+  # symlinked parent, or with a .. component.
+  local dest_parent
+  dest_parent="$(cd "$(dirname "$dest_path")" 2>/dev/null && pwd -P)" || dest_parent=""
+  if [ -n "$dest_parent" ] && [ "$dest_parent/$skill_name" = "$(cd "$source_path" && pwd -P)" ]; then
+    print_error "Refusing to install $skill_name onto its own source: $source_path"
+    return 1
+  fi
 
   # Remove existing installation if present (handles both directories and symlinks)
   if [ -e "$dest_path" ] || [ -L "$dest_path" ]; then
     print_warn "Removing existing installation: $dest_path"
-    rm -rf "$dest_path"
+    if ! rm -rf "$dest_path"; then
+      print_error "Failed to remove the existing $skill_name at $dest_path"
+      return 1
+    fi
   fi
 
   if [ "$USE_SYMLINK" = true ] || [ "$USE_SYMLINK_FORCE" = true ]; then
@@ -339,6 +356,9 @@ install_skill() {
     print_info "Installing $skill_name..."
     if ! cp -r "$source_path" "$dest_path"; then
       print_error "Failed to copy $skill_name to $dest_path"
+      # Skill discovery only looks for SKILL.md, so a half-copied tree that got
+      # that far reads as a complete skill. Leave nothing rather than that.
+      rm -rf "$dest_path"
       return 1
     fi
     print_info "✓ Installed $skill_name to $dest_path"

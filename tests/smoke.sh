@@ -104,6 +104,19 @@ for s in alpha bravo; do
 done
 mkdir -p "$DEST"
 
+# The failure cases below are built by making a directory unwritable. A user who
+# bypasses permission checks — root, or a container granting CAP_DAC_OVERRIDE —
+# writes through that anyway, which would turn every failure assertion red
+# against correct code. Check the mechanism itself rather than the user id, and
+# exit non-zero so the run cannot be mistaken for a pass.
+mkdir -p "$WORK/wperm" && chmod a-w "$WORK/wperm"
+if touch "$WORK/wperm/probe" 2>/dev/null; then
+  echo "cannot run here: this user can write into a directory with write permission removed" >&2
+  echo "the failure assertions are unconstructible; run the suite as an ordinary user" >&2
+  exit 2
+fi
+chmod u+w "$WORK/wperm"
+
 run() { # run <outfile> <errfile> <args...>
   local out=$1 err=$2
   shift 2
@@ -177,6 +190,43 @@ reset_dest
 run "$WORK/o" "$WORK/e" --symlink --skill nosuch --skill alpha
 assert_status "an unknown skill aborts with non-zero status" nonzero $?
 assert_true "the skill queued after the failure is not installed" test ! -e "$DEST/alpha"
+
+# Installing a skill onto its own source would have the removal delete the
+# source before anything reads it, leaving a self-referencing symlink and a
+# success status.
+echo "[refuses to install onto its own source]"
+SELF="$WORK/self"
+mkdir -p "$SELF/my-skill"
+printf -- '---\nname: my-skill\ndescription: smoke fixture\n---\n' >"$SELF/my-skill/SKILL.md"
+(cd "$SELF" && SKILLS_INSTALL_PATH="$SELF" "$ADD_SKILL" "$SELF/my-skill" --symlink </dev/null >"$WORK/o" 2>"$WORK/e")
+assert_status "installing onto its own source aborts" nonzero $?
+assert_true "the source file survives" test -f "$SELF/my-skill/SKILL.md"
+assert_true "the source is still a directory" test ! -L "$SELF/my-skill"
+cat "$WORK/o" "$WORK/e" >"$WORK/both"
+assert_contains "it says what it refused" "$WORK/both" '\[ERROR\].*own source'
+
+# A destination that cannot even be created is still a skill that could not be
+# installed, so it gets the same report as the ln and cp failures.
+echo "[reports a destination it cannot create]"
+mkdir -p "$WORK/locked" && chmod a-w "$WORK/locked"
+(cd "$WORK/proj" && SKILLS_INSTALL_PATH="$WORK/locked/skills" "$ADD_SKILL" "$SRC" --symlink </dev/null >"$WORK/o" 2>"$WORK/e")
+status=$?
+chmod u+w "$WORK/locked"
+assert_status "an uncreatable destination aborts" nonzero $status
+cat "$WORK/o" "$WORK/e" >"$WORK/both"
+assert_contains "it names the skill it could not install" "$WORK/both" '\[ERROR\].*alpha'
+
+# cp -r copies what it can before failing, and skill discovery only looks for
+# SKILL.md, so a half-copied tree would read as a complete skill.
+echo "[leaves nothing behind after a partial copy]"
+reset_dest
+mkdir -p "$SRC/skills/alpha/sub" && echo secret >"$SRC/skills/alpha/sub/locked.txt"
+chmod a-r "$SRC/skills/alpha/sub/locked.txt"
+run "$WORK/o" "$WORK/e"
+assert_status "a partial copy aborts" nonzero $?
+assert_true "no half-copied skill is left behind" test ! -e "$DEST/alpha"
+chmod u+r "$SRC/skills/alpha/sub/locked.txt"
+rm -rf "$SRC/skills/alpha/sub"
 
 # The failure path must not read from stdin. A fifo this script holds open
 # delivers nothing and never signals end of file, so anything that reads it
