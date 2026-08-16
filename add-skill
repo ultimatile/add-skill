@@ -347,11 +347,19 @@ install_skill() {
   local dest_parent
   dest_parent="$(cd "$(dirname "$dest_path")" 2>/dev/null && pwd -P)" || dest_parent=""
   if [ -n "$dest_parent" ]; then
-    local dest_entry source_entry source_target
-    dest_entry="$dest_parent/$skill_name"
-    source_entry="$(cd "$(dirname "$source_path")" && pwd -P)/$(basename "$source_path")"
-    source_target="$(cd "$source_path" && pwd -P)"
-    if [ "$dest_entry" = "$source_entry" ] || [ "$dest_entry" = "$source_target" ]; then
+    local dest_entry source_parent source_entry source_target
+    # basename, not $skill_name: a --skill argument may carry path components,
+    # and the dirname above has already absorbed them into dest_parent.
+    dest_entry="$dest_parent/$(basename "$dest_path")"
+    source_parent="$(cd "$(dirname "$source_path")" 2>/dev/null && pwd -P)" || source_parent=""
+    source_entry=""
+    [ -n "$source_parent" ] && source_entry="$source_parent/$(basename "$source_path")"
+    # A source directory without execute permission cannot be entered, but it
+    # can still be symlinked, so failing to resolve it drops that half of the
+    # test rather than the install.
+    source_target="$(cd "$source_path" 2>/dev/null && pwd -P)" || source_target=""
+    if { [ -n "$source_entry" ] && [ "$dest_entry" = "$source_entry" ]; } ||
+      { [ -n "$source_target" ] && [ "$dest_entry" = "$source_target" ]; }; then
       print_error "Refusing to install $skill_name onto its own source: $source_path"
       return 1
     fi

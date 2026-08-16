@@ -242,6 +242,28 @@ run_at "$POINTED" "$POINTED/dest" "$WORK/o" "$WORK/e" "$POINTED/repo" --symlink
 assert_status "installing onto what the source entry points at aborts" nonzero $?
 assert_true "the pointed-at content survives" test -f "$POINTED/dest/alpha/SKILL.md"
 
+# --skill takes the name as given, so it can carry path components. The
+# destination's parent then absorbs them and the comparison has to account for
+# it rather than re-appending the whole name.
+NESTED="$WORK/nested"
+mkdir -p "$NESTED/repo/skills/sub/alpha"
+printf -- '---\nname: alpha\ndescription: smoke fixture\n---\n' >"$NESTED/repo/skills/sub/alpha/SKILL.md"
+run_at "$NESTED" "$NESTED/repo/skills" "$WORK/o" "$WORK/e" "$NESTED/repo" --symlink --skill sub/alpha
+assert_status "a slash-carrying skill name cannot slip past the guard" nonzero $?
+assert_true "the nested source survives" test -f "$NESTED/repo/skills/sub/alpha/SKILL.md"
+
+# A source directory that cannot be entered is still linkable, and was before
+# the guard existed, so the guard must not turn that into a failure.
+UNREADABLE="$WORK/unreadable"
+mkdir -p "$UNREADABLE/repo/skills/alpha" "$UNREADABLE/dest"
+printf -- '---\nname: alpha\ndescription: smoke fixture\n---\n' >"$UNREADABLE/repo/skills/alpha/SKILL.md"
+chmod 600 "$UNREADABLE/repo/skills/alpha"
+run_at "$UNREADABLE" "$UNREADABLE/dest" "$WORK/o" "$WORK/e" "$UNREADABLE/repo" --symlink --skill alpha
+status=$?
+chmod 700 "$UNREADABLE/repo/skills/alpha"
+assert_status "an unenterable source still installs" zero $status
+assert_true "it was linked" test -L "$UNREADABLE/dest/alpha"
+
 # A destination that cannot even be created is still a skill that could not be
 # installed, so it gets the same report as the ln and cp failures.
 echo "[reports a destination it cannot create]"
