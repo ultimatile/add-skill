@@ -334,7 +334,10 @@ install_skill() {
   else
     # Copy skill
     print_info "Installing $skill_name..."
-    cp -r "$source_path" "$dest_path"
+    if ! cp -r "$source_path" "$dest_path"; then
+      print_error "Failed to copy $skill_name to $dest_path"
+      return 1
+    fi
     print_info "✓ Installed $skill_name to $dest_path"
   fi
 }

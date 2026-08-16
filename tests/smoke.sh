@@ -119,18 +119,30 @@ assert_status "copy install exits 0" zero $?
 # An unwritable destination makes ln fail while nothing occupies the target, so
 # the failure is never "the target already exists".
 echo "[install fails]"
-for mode in --symlink --symlink-force; do
+# Each spec is "label|flag|tool": the flag to pass (empty for the default copy
+# mode) and the command whose own stderr must carry the reason. Kept as split
+# strings because bash 3.2 has no associative arrays.
+for spec in "--symlink|--symlink|ln" "--symlink-force|--symlink-force|ln" "copy mode||cp"; do
+  label="${spec%%|*}"
+  rest="${spec#*|}"
+  flag="${rest%%|*}"
+  tool="${rest#*|}"
+
   reset_dest
   chmod a-w "$DEST"
-  run "$WORK/o" "$WORK/e" "$mode"
+  if [ -n "$flag" ]; then
+    run "$WORK/o" "$WORK/e" "$flag"
+  else
+    run "$WORK/o" "$WORK/e"
+  fi
   status=$?
   chmod u+w "$DEST"
 
-  assert_status "$mode aborts with non-zero status" nonzero $status
+  assert_status "$label aborts with non-zero status" nonzero $status
   cat "$WORK/o" "$WORK/e" >"$WORK/both"
-  assert_contains "$mode names the skill it could not install" "$WORK/both" '\[ERROR\].*alpha'
-  assert_contains "$mode lets ln report the reason on stderr" "$WORK/e" '^ln:'
-  assert_absent "$mode asks no question" "$WORK/both" '(y/N)'
+  assert_contains "$label names the skill it could not install" "$WORK/both" '\[ERROR\].*alpha'
+  assert_contains "$label lets $tool report the reason on stderr" "$WORK/e" "^$tool:"
+  assert_absent "$label asks no question" "$WORK/both" '(y/N)'
 done
 
 # A failure must stop the run rather than carry on to the remaining skills.
