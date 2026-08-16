@@ -79,3 +79,11 @@ An existing installation at the destination is replaced in every mode. Nothing p
 # Override the installation path
 SKILLS_INSTALL_PATH=/custom/path add-skill ~/my-skills-repo
 ```
+
+## Tests
+
+```bash
+./tests/smoke.sh
+```
+
+Builds a throwaway skills repository and installs from it, covering both the successful modes and the failure path. Exits non-zero if any assertion fails. Set `ADD_SKILL` to test a different copy of the script.

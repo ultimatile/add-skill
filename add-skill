@@ -132,7 +132,7 @@ Examples:
   # Install with symlinks (recommended for development)
   add-skill ~/my-skills-repo --symlink --all
 
-  # Install with symlinks, forcefully overwriting existing files
+  # Install with symlinks, forcing the link with ln -f
   add-skill ~/my-skills-repo --symlink-force --all
 
   # Install specific skills with symlinks
@@ -316,13 +316,15 @@ install_skill() {
     # Create symlink with absolute path
     print_info "Creating symlink for $skill_name..."
 
+    # The destination was cleared above, so a failure here is never "the
+    # target exists"; ln's own stderr message carries the actual reason.
     if [ "$USE_SYMLINK_FORCE" = true ]; then
-      ln -fs "$source_path" "$dest_path"
+      if ! ln -fs "$source_path" "$dest_path"; then
+        print_error "Failed to symlink $skill_name to $dest_path"
+        return 1
+      fi
       print_info "✓ Symlinked $skill_name (forced): $dest_path -> $source_path"
     else
-      # The destination was cleared above, so a failure here is never "the
-      # target exists". Let ln report the actual reason on stderr instead of
-      # discarding it and guessing.
       if ! ln -s "$source_path" "$dest_path"; then
         print_error "Failed to symlink $skill_name to $dest_path"
         return 1
@@ -555,7 +557,7 @@ if [ "$USE_SYMLINK_FORCE" = true ]; then
   print_info "Installation mode: Symlink (force)"
   echo ""
   echo "  Skills are symlinked from: $SKILLS_SOURCE_DIR"
-  echo "  → Existing files were forcefully overwritten"
+  echo "  → Links were created with ln -f"
   echo ""
 elif [ "$USE_SYMLINK" = true ]; then
   print_info "Installation mode: Symlink"
