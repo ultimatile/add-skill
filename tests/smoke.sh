@@ -147,7 +147,7 @@ run "$WORK/o" "$WORK/e" --symlink-force
 assert_status "symlink-force exits 0" zero $?
 assert_true "symlink-force leaves a symlink behind" test -L "$DEST/alpha"
 assert_contains "symlink-force marks the per-skill line forced" "$WORK/o" '(forced)'
-assert_contains "symlink-force names ln -f in the summary" "$WORK/o" 'ln -f'
+assert_contains "symlink-force names replacement in the summary" "$WORK/o" 'Real files'
 
 reset_dest
 run "$WORK/o" "$WORK/e"
@@ -155,12 +155,26 @@ assert_status "copy install exits 0" zero $?
 assert_true "copy install produces a directory" test -d "$DEST/alpha"
 assert_true "the copied skill is not a symlink" test ! -L "$DEST/alpha"
 
-# README promises the destination is replaced in every mode, copy included, so
-# a file left inside a previous copy must not survive the next one.
+# Copy mode replaces a real directory, so a file left inside a previous copy
+# must not survive the next one.
 echo stale >"$DEST/alpha/stale.txt"
 run "$WORK/o" "$WORK/e"
 assert_status "re-running the copy install exits 0" zero $?
 assert_true "the copy install replaces what was there" test ! -e "$DEST/alpha/stale.txt"
+
+# A real entry at the destination is content this tool did not put there.
+echo "[real content at the destination]"
+reset_dest
+mkdir -p "$DEST/alpha" && echo mine >"$DEST/alpha/mine.txt"
+run "$WORK/o" "$WORK/e" --symlink
+assert_status "plain --symlink refuses a real directory" nonzero $?
+assert_true "the real directory is untouched" test -f "$DEST/alpha/mine.txt"
+cat "$WORK/o" "$WORK/e" >"$WORK/both"
+assert_contains "it points at --symlink-force" "$WORK/both" '\[ERROR\].*symlink-force'
+
+run "$WORK/o" "$WORK/e" --symlink-force
+assert_status "--symlink-force replaces it" zero $?
+assert_true "the destination became a symlink" test -L "$DEST/alpha"
 
 # An unwritable destination makes the link or the copy fail while nothing
 # occupies the target, so the failure is never "the target already exists".
@@ -251,6 +265,27 @@ printf -- '---\nname: alpha\ndescription: smoke fixture\n---\n' >"$NESTED/repo/s
 run_at "$NESTED" "$NESTED/repo/skills" "$WORK/o" "$WORK/e" "$NESTED/repo" --symlink --skill sub/alpha
 assert_status "a slash-carrying skill name cannot slip past the guard" nonzero $?
 assert_true "the nested source survives" test -f "$NESTED/repo/skills/sub/alpha/SKILL.md"
+
+# Containment, not just equality: a destination that is an ancestor of the
+# source would have rm -rf take the whole source tree with it.
+ANCESTOR="$WORK/ancestor"
+mkdir -p "$ANCESTOR/inst/alpha/skills/alpha"
+printf -- '---\nname: alpha\ndescription: smoke fixture\n---\n' >"$ANCESTOR/inst/alpha/skills/alpha/SKILL.md"
+echo keep >"$ANCESTOR/inst/alpha/README.md"
+run_at "$ANCESTOR" "$ANCESTOR/inst" "$WORK/o" "$WORK/e" "$ANCESTOR/inst/alpha" --symlink
+assert_status "a destination containing the source aborts" nonzero $?
+assert_true "the surrounding repository survives" test -f "$ANCESTOR/inst/alpha/README.md"
+
+# rm -rf through a trailing slash follows a symlink and empties its target, so
+# the removal has to work on the normalized entry.
+TRAILING="$WORK/trailing"
+mkdir -p "$TRAILING/repo/skills/alpha" "$TRAILING/dest"
+printf -- '---\nname: alpha\ndescription: smoke fixture\n---\n' >"$TRAILING/repo/skills/alpha/SKILL.md"
+echo payload >"$TRAILING/repo/skills/alpha/payload.txt"
+run_at "$TRAILING" "$TRAILING/dest" "$WORK/o" "$WORK/e" "$TRAILING/repo" --symlink --skill alpha
+assert_status "the first install exits 0" zero $?
+run_at "$TRAILING" "$TRAILING/dest" "$WORK/o" "$WORK/e" "$TRAILING/repo" --symlink --skill alpha/
+assert_true "a trailing slash does not reach through the link" test -f "$TRAILING/repo/skills/alpha/payload.txt"
 
 # A source directory that cannot be entered is still linkable, and was before
 # the guard existed, so the guard must not turn that into a failure.

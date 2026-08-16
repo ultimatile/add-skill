@@ -69,9 +69,11 @@ Codex searches project-level locations before global ones, but same-name skills 
 
 - **Copy** (default): Self-contained. Requires reinstall after updating the source repo.
 - **Symlink** (`--symlink`): References the source repo directly. Updates automatically on `git pull`.
-- **Symlink force** (`--symlink-force`): Same as `--symlink`, but links with `ln -f`.
+- **Symlink force** (`--symlink-force`): Same as `--symlink`, but also replaces a real file or directory at the destination.
 
-An existing installation at the destination is replaced in every mode. Nothing prompts for confirmation — if a skill cannot be installed, `add-skill` reports the reason and exits non-zero without installing the rest.
+A symlink left by an earlier install is replaced in every mode, and is unlinked rather than followed, so whatever it points at is untouched. A real file or directory at the destination is replaced by copy mode and by `--symlink-force`; plain `--symlink` refuses it and says so. An install whose destination overlaps its own source is refused outright.
+
+Nothing prompts for confirmation — if a skill cannot be installed, `add-skill` reports the reason and exits non-zero without installing the rest.
 
 ### Environment Variable
 

@@ -88,6 +88,21 @@ print_error() {
   echo -e "${RED}[ERROR]${NC} $1"
 }
 
+# True when two resolved paths are equal or one contains the other. An empty
+# argument means that path could not be resolved, which is not an overlap.
+paths_overlap() {
+  local a=$1 b=$2
+  if [ -z "$a" ] || [ -z "$b" ]; then
+    return 1
+  fi
+  if [ "$a" = "$b" ]; then
+    return 0
+  fi
+  case "$a/" in "$b"/*) return 0 ;; esac
+  case "$b/" in "$a"/*) return 0 ;; esac
+  return 1
+}
+
 show_help() {
   cat <<'EOF'
 add-skill - Install skills from a local repository to a project directory
@@ -108,7 +123,7 @@ Options:
   --all               Install all skills (default)
   --skill <name>      Install specific skill(s) (can be used multiple times)
   --symlink           Create symlinks instead of copying (enables automatic updates)
-  --symlink-force     Create symlinks with ln -f
+  --symlink-force     Create symlinks, replacing a real file or directory at the destination
   --global            Install to Claude Code global skills path (~/.claude/skills, or $CLAUDE_CONFIG_DIR/skills if set)
   --codex             Install to Codex global skills path (~/.agents/skills)
   --codex-repo        Install to Codex repository-level path (./.agents/skills)
@@ -132,7 +147,7 @@ Examples:
   # Install with symlinks (recommended for development)
   add-skill ~/my-skills-repo --symlink --all
 
-  # Install with symlinks, forcing the link with ln -f
+  # Install with symlinks, replacing whatever is at the destination
   add-skill ~/my-skills-repo --symlink-force --all
 
   # Install specific skills with symlinks
@@ -157,9 +172,11 @@ Examples:
   add-skill ~/my-skills-repo --symlink --kiro-repo --all
 
 
-  Existing installations are replaced in both symlink modes; --symlink-force
-  additionally passes -f to ln. Neither mode asks for confirmation: if the
-  symlink cannot be created, the run reports the reason and stops.
+  A symlink left by an earlier install is replaced in every mode, and is
+  unlinked rather than followed. A real file or directory at the destination
+  is replaced by copy mode and by --symlink-force; plain --symlink refuses it.
+  Nothing asks for confirmation: if the install cannot be made, the run
+  reports the reason and stops.
 
   Codex skill locations (in search order; same-name skills are not merged,
   so both can appear in the skill selector):
@@ -335,41 +352,53 @@ install_skill() {
     return 1
   fi
 
-  # The removal below runs before the link or the copy, so installing a skill
-  # onto its own source would delete that source and leave the install reading
-  # from nothing. The destination can be the source in two ways, and the
-  # comparison has to catch both: it can be the source's own directory entry,
-  # which the removal deletes outright, or it can be what that entry points at,
-  # which the removal empties. Resolve parents on both sides so a relative path,
-  # a symlinked parent, or a .. component still compares correctly, and keep the
-  # final component unresolved for the entry test so a symlinked entry compares
-  # as itself rather than as its target.
-  local dest_parent
+  # Normalize the destination once and work from it below. dirname absorbs any
+  # path components a --skill argument carried and strips a trailing slash, and
+  # resolving the parent settles a relative path or a .. component. The final
+  # component stays unresolved so a symlinked destination is still the link.
+  local dest_entry dest_parent
   dest_parent="$(cd "$(dirname "$dest_path")" 2>/dev/null && pwd -P)" || dest_parent=""
   if [ -n "$dest_parent" ]; then
-    local dest_entry source_parent source_entry source_target
-    # basename, not $skill_name: a --skill argument may carry path components,
-    # and the dirname above has already absorbed them into dest_parent.
     dest_entry="$dest_parent/$(basename "$dest_path")"
-    source_parent="$(cd "$(dirname "$source_path")" 2>/dev/null && pwd -P)" || source_parent=""
-    source_entry=""
-    [ -n "$source_parent" ] && source_entry="$source_parent/$(basename "$source_path")"
-    # A source directory without execute permission cannot be entered, but it
-    # can still be symlinked, so failing to resolve it drops that half of the
-    # test rather than the install.
-    source_target="$(cd "$source_path" 2>/dev/null && pwd -P)" || source_target=""
-    if { [ -n "$source_entry" ] && [ "$dest_entry" = "$source_entry" ]; } ||
-      { [ -n "$source_target" ] && [ "$dest_entry" = "$source_target" ]; }; then
-      print_error "Refusing to install $skill_name onto its own source: $source_path"
-      return 1
-    fi
+  else
+    dest_entry="$dest_path"
   fi
 
-  # Remove existing installation if present (handles both directories and symlinks)
-  if [ -e "$dest_path" ] || [ -L "$dest_path" ]; then
-    print_warn "Removing existing installation: $dest_path"
-    if ! rm -rf "$dest_path"; then
-      print_error "Failed to remove the existing $skill_name at $dest_path"
+  # The removal below runs before the link or the copy, so it must not reach the
+  # source. Rather than enumerating the path shapes that could name the source,
+  # bound the relation: two resolved paths are equal, one contains the other, or
+  # they are disjoint, and only disjoint is safe. Compare against both the
+  # source's own entry and what that entry points at.
+  local source_parent source_entry source_target
+  source_parent="$(cd "$(dirname "$source_path")" 2>/dev/null && pwd -P)" || source_parent=""
+  source_entry=""
+  [ -n "$source_parent" ] && source_entry="$source_parent/$(basename "$source_path")"
+  # A source directory without execute permission cannot be entered, but it can
+  # still be symlinked, so failing to resolve it drops that comparison rather
+  # than the install.
+  source_target="$(cd "$source_path" 2>/dev/null && pwd -P)" || source_target=""
+  if paths_overlap "$dest_entry" "$source_entry" || paths_overlap "$dest_entry" "$source_target"; then
+    print_error "Refusing to install $skill_name: $dest_entry overlaps its own source $source_path"
+    return 1
+  fi
+
+  # Clear the destination. A symlink is unlinked rather than followed, because
+  # rm -rf through a link deletes what it points at. Anything else is real
+  # content, and in symlink mode it is not something this tool put there, so
+  # replacing it is opt-in.
+  if [ -L "$dest_entry" ]; then
+    if ! rm -f "$dest_entry"; then
+      print_error "Failed to remove the existing $skill_name at $dest_entry"
+      return 1
+    fi
+  elif [ -e "$dest_entry" ]; then
+    if [ "$USE_SYMLINK" = true ] && [ "$USE_SYMLINK_FORCE" != true ]; then
+      print_error "$dest_entry already exists and is not a link this tool made; pass --symlink-force to replace it"
+      return 1
+    fi
+    print_warn "Removing existing installation: $dest_entry"
+    if ! rm -rf "$dest_entry"; then
+      print_error "Failed to remove the existing $skill_name at $dest_entry"
       return 1
     fi
   fi
@@ -386,22 +415,22 @@ install_skill() {
     fi
 
     # ln writes its own reason to stderr, so this does not restate it.
-    if ! ln "$ln_flags" "$source_path" "$dest_path"; then
-      print_error "Failed to symlink $skill_name to $dest_path"
+    if ! ln "$ln_flags" "$source_path" "$dest_entry"; then
+      print_error "Failed to symlink $skill_name to $dest_entry"
       return 1
     fi
-    print_info "✓ Symlinked $skill_name$forced: $dest_path -> $source_path"
+    print_info "✓ Symlinked $skill_name$forced: $dest_entry -> $source_path"
   else
     # Copy skill
     print_info "Installing $skill_name..."
-    if ! cp -r "$source_path" "$dest_path"; then
-      print_error "Failed to copy $skill_name to $dest_path"
+    if ! cp -r "$source_path" "$dest_entry"; then
+      print_error "Failed to copy $skill_name to $dest_entry"
       # Skill discovery only looks for SKILL.md, so a half-copied tree that got
       # that far reads as a complete skill. Leave nothing rather than that.
-      rm -rf "$dest_path"
+      rm -rf "$dest_entry"
       return 1
     fi
-    print_info "✓ Installed $skill_name to $dest_path"
+    print_info "✓ Installed $skill_name to $dest_entry"
   fi
 }
 
@@ -623,7 +652,7 @@ if [ "$USE_SYMLINK_FORCE" = true ]; then
   print_info "Installation mode: Symlink (force)"
   echo ""
   echo "  Skills are symlinked from: $SKILLS_SOURCE_DIR"
-  echo "  → Links were created with ln -f"
+  echo "  → Real files at the destination were replaced"
   echo ""
 elif [ "$USE_SYMLINK" = true ]; then
   print_info "Installation mode: Symlink"
