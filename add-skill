@@ -12,7 +12,7 @@
 
 set -e
 
-VERSION="0.4.2"
+VERSION="0.5.0"
 
 # Colors for output
 RED='\033[0;31m'
@@ -88,6 +88,55 @@ print_error() {
   echo -e "${RED}[ERROR]${NC} $1"
 }
 
+# True when the first resolved path is the second or sits inside it. An empty
+# argument means that path could not be resolved, which is inside nothing.
+path_within() {
+  local inner=$1 outer=$2
+  if [ -z "$inner" ] || [ -z "$outer" ]; then
+    return 1
+  fi
+  # The root directory is spelled "/", so appending a separator below would give
+  # the pattern //* and match nothing beneath it. Strip a trailing separator
+  # from both sides first; "/" then becomes "" and /* matches every path.
+  outer="${outer%/}"
+  inner="${inner%/}"
+  # A leading double separator is implementation-defined in POSIX but names the
+  # same directory on the systems this runs on. Collapse it too: this decides
+  # whether a removal may proceed, and treating two paths as related when they
+  # might not be only ever refuses an install, while missing a relation deletes.
+  while [ "${inner#//}" != "$inner" ]; do inner="${inner#/}"; done
+  while [ "${outer#//}" != "$outer" ]; do outer="${outer#/}"; done
+  if [ "$inner" = "$outer" ]; then
+    return 0
+  fi
+  case "$inner/" in "$outer"/*) return 0 ;; esac
+  return 1
+}
+
+# True when the first path, or an ancestor of it, is the same file as the
+# second. Text cannot settle this: two paths can name one directory with no
+# resolver unifying them. A Linux bind mount is the plain case — mount --bind
+# leaves both spellings intact and pwd -P canonicalizes neither onto the
+# other — and -ef compares device and inode instead. It follows symlinks, so
+# the caller must only ask about a destination that would be removed
+# recursively.
+path_under_identity() {
+  local inner=$1 outer=$2
+  if [ -z "$inner" ] || [ -z "$outer" ] || [ ! -e "$outer" ]; then
+    return 1
+  fi
+  local cur=$inner prev=''
+  while [ "$cur" != "$prev" ]; do
+    if [ -e "$cur" ] && [ "$cur" -ef "$outer" ]; then
+      return 0
+    fi
+    prev=$cur
+    cur="${cur%/*}"
+    [ -z "$cur" ] && cur="/"
+  done
+  return 1
+}
+
 show_help() {
   cat <<'EOF'
 add-skill - Install skills from a local repository to a project directory
@@ -108,7 +157,7 @@ Options:
   --all               Install all skills (default)
   --skill <name>      Install specific skill(s) (can be used multiple times)
   --symlink           Create symlinks instead of copying (enables automatic updates)
-  --symlink-force     Create symlinks with force flag (overwrite existing files without prompt)
+  --symlink-force     Create symlinks, replacing a real file or directory at the destination
   --global            Install to Claude Code global skills path (~/.claude/skills, or $CLAUDE_CONFIG_DIR/skills if set)
   --codex             Install to Codex global skills path (~/.agents/skills)
   --codex-repo        Install to Codex repository-level path (./.agents/skills)
@@ -132,7 +181,7 @@ Examples:
   # Install with symlinks (recommended for development)
   add-skill ~/my-skills-repo --symlink --all
 
-  # Install with symlinks, forcefully overwriting existing files
+  # Install with symlinks, replacing whatever is at the destination
   add-skill ~/my-skills-repo --symlink-force --all
 
   # Install specific skills with symlinks
@@ -157,7 +206,11 @@ Examples:
   add-skill ~/my-skills-repo --symlink --kiro-repo --all
 
 
-  Use --symlink-force when you want to overwrite existing files without being prompted.
+  A symlink left by an earlier install is replaced in every mode, and is
+  unlinked rather than followed. A real file or directory at the destination
+  is replaced by copy mode and by --symlink-force; plain --symlink refuses it.
+  Nothing asks for confirmation: if the install cannot be made, the run
+  reports the reason and stops.
 
   Codex skill locations (in search order; same-name skills are not merged,
   so both can appear in the skill selector):
@@ -171,6 +224,29 @@ Examples:
 EOF
 }
 
+# Whether add-skill ended up on PATH is worth saying however it got to
+# $install_dir, including when it was already there and nothing was installed.
+report_path_state() {
+  local install_dir=$1
+  if echo "$PATH" | tr ':' '\n' | grep -Fqx "$install_dir"; then
+    print_info "add-skill is now available in your PATH"
+    return 0
+  fi
+  echo ""
+  print_warn "$install_dir is not in your PATH"
+  echo "  Add the following to your shell configuration:"
+  echo ""
+  echo "  # For bash (~/.bashrc):"
+  echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+  echo ""
+  echo "  # For zsh (~/.zshrc):"
+  echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+  echo ""
+  echo "  # For fish (~/.config/fish/config.fish):"
+  echo "  fish_add_path \$HOME/.local/bin"
+  echo ""
+}
+
 # Install add-skill itself to ~/.local/bin
 self_install() {
   local script_path
@@ -182,34 +258,43 @@ self_install() {
 
   print_info "Installing add-skill to $install_path..."
 
-  mkdir -p "$install_dir"
+  if ! mkdir -p "$install_dir"; then
+    print_error "Failed to create $install_dir"
+    return 1
+  fi
+
+  # Resolving the earlier symlink keeps a symlinked install from pointing at
+  # itself, but the script can also be the real file sitting at the destination.
+  # Then the removal below would delete it and the link would point at nothing.
+  # Compare resolved paths: /tmp and /private/tmp name one directory on macOS,
+  # so the two unresolved strings can differ while naming the same file.
+  if ! (cd "$install_dir" 2>/dev/null); then
+    print_error "Failed to enter $install_dir"
+    return 1
+  fi
+  # -ef compares device and inode, so the two spellings a firmlink gives one
+  # directory still read as the same file.
+  if [ -e "$install_path" ] && [ "$script_path" -ef "$install_path" ]; then
+    print_info "add-skill already lives at $install_path; leaving it as it is"
+    report_path_state "$install_dir"
+    return 0
+  fi
 
   if [ -e "$install_path" ] || [ -L "$install_path" ]; then
     print_warn "Removing existing: $install_path"
-    rm -f "$install_path"
+    if ! rm -f "$install_path"; then
+      print_error "Failed to remove the existing $install_path"
+      return 1
+    fi
   fi
 
-  ln -s "$script_path" "$install_path"
+  if ! ln -s "$script_path" "$install_path"; then
+    print_error "Failed to symlink add-skill to $install_path"
+    return 1
+  fi
   print_info "Symlinked: $install_path -> $script_path"
 
-  # Check if ~/.local/bin is in PATH
-  if ! echo "$PATH" | tr ':' '\n' | grep -qx "$install_dir"; then
-    echo ""
-    print_warn "$install_dir is not in your PATH"
-    echo "  Add the following to your shell configuration:"
-    echo ""
-    echo "  # For bash (~/.bashrc):"
-    echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
-    echo ""
-    echo "  # For zsh (~/.zshrc):"
-    echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
-    echo ""
-    echo "  # For fish (~/.config/fish/config.fish):"
-    echo "  fish_add_path \$HOME/.local/bin"
-    echo ""
-  else
-    print_info "add-skill is now available in your PATH"
-  fi
+  report_path_state "$install_dir"
 }
 
 list_available_skills() {
@@ -253,7 +338,10 @@ list_available_skills() {
   local found=false
   for skill_dir in "$SKILLS_SOURCE_DIR"/*/; do
     if [ -d "$skill_dir" ]; then
-      local skill_name=$(basename "$skill_dir")
+      # Not basename: command substitution strips a trailing newline, and a
+      # directory name may end in one.
+      local trimmed="${skill_dir%/}"
+      local skill_name="${trimmed##*/}"
       if [ -f "$skill_dir/SKILL.md" ]; then
         # Extract description from YAML frontmatter if available
         local description=$(awk '/^---$/,/^---$/{if(/^description:/) {sub(/^description: */, ""); print; exit}}' "$skill_dir/SKILL.md")
@@ -274,8 +362,34 @@ list_available_skills() {
   echo ""
 }
 
+# Returns non-zero when the skill could not be installed. Callers must stay bare
+# commands: set -e ignores a failure in a condition, on the left of && or ||,
+# under !, or anywhere but the end of a pipeline, and that abort is the only
+# thing turning this non-zero into the documented "reports the reason and
+# stops".
 install_skill() {
+  # A --skill argument arrives as typed, and shell completion appends a slash to
+  # a directory name. Strip it here so the source path, the destination and the
+  # messages all name the same thing.
   local skill_name=$1
+  while [ "${skill_name%/}" != "$skill_name" ]; do
+    skill_name="${skill_name%/}"
+  done
+
+  # A skill name names a directory directly under the source's skills/, which
+  # is the only level discovery walks. A path component would send both the
+  # source and the destination somewhere else: --skill ../x installs outside
+  # the install path and clears whatever was there.
+  case "$skill_name" in
+  "" | "." | "..")
+    print_error "Not a skill name: $1"
+    return 1
+    ;;
+  */*)
+    print_error "A skill name cannot contain a path component: $1"
+    return 1
+    ;;
+  esac
   local source_path
   # Resolve source path based on discovery mode
   if [ "$MARKETPLACE_MODE" = true ]; then
@@ -302,42 +416,140 @@ install_skill() {
   fi
 
   # Create destination directory
-  mkdir -p "$INSTALL_PATH"
+  if ! mkdir -p "$INSTALL_PATH"; then
+    print_error "Failed to create $INSTALL_PATH for $skill_name"
+    return 1
+  fi
 
-  # Remove existing installation if present (handles both directories and symlinks)
-  if [ -e "$dest_path" ] || [ -L "$dest_path" ]; then
+  # Normalize the destination once and work from it below. dirname absorbs any
+  # path components a --skill argument carried and strips a trailing slash, and
+  # resolving the parent settles a relative path or a .. component. The final
+  # component stays unresolved so a symlinked destination is still the link.
+  local dest_entry dest_parent
+  local dest_dir="${dest_path%/*}"
+  [ -z "$dest_dir" ] && dest_dir="/"
+  dest_parent="$(cd "$dest_dir" 2>/dev/null && pwd -P)" || dest_parent=""
+  if [ -n "$dest_parent" ]; then
+    # ${dest_parent%/} because a parent of "/" would otherwise join to //name.
+    # path_within collapses that too, so either half closes the hole; this one
+    # keeps dest_entry canonical for the removal and the link, and is the only
+    # one no test covers, since reaching it needs an install path of "/".
+    # ${x##*/} rather than basename: command substitution strips every
+    # trailing newline, and a filename may end in one, which would silently
+    # retarget this at the sibling of that name.
+    dest_entry="${dest_parent%/}/${dest_path##*/}"
+  else
+    dest_entry="$dest_path"
+  fi
+
+  # The removal below runs before the link or the copy, so it must not reach the
+  # source. Rather than enumerating the path shapes that could name the source,
+  # bound the relation: what matters is whether the source lies inside what is
+  # about to be removed. The other direction — a destination inside the source,
+  # which is what installing a single-skill repo into its own .claude/skills
+  # does — is safe, because the removal only touches the destination itself.
+  #
+  # Compare every entry the source resolves through, not just its ends: the
+  # destination can be a link in the middle, and unlinking it there leaves the
+  # source pointing at what this then creates — a cycle, reported as success.
+  # Walked inline rather than through a helper that lists the chain, because a
+  # filename may contain a newline and any line-delimited list would split it.
+  #
+  # Resolve both sides the same way. cd plus pwd -P agrees with itself, while
+  # realpath returns whichever spelling it was handed, so mixing the two put
+  # one directory in two namespaces. That alone is not enough, though: a bind
+  # mount gives a directory two paths that no resolver unifies at all, which
+  # is what the identity comparison below is for.
+  local node="$source_path" node_dir node_parent link depth=0
+  while :; do
+    node_dir="${node%/*}"
+    [ -z "$node_dir" ] && node_dir="/"
+    node_parent="$(cd "$node_dir" 2>/dev/null && pwd -P)" || break
+    node="${node_parent%/}/${node##*/}"
+    # Compared as soon as it is formed, so no exit below can leave an entry
+    # unexamined — including the target the last link resolves to.
+    if path_within "$node" "$dest_entry"; then
+      print_error "Refusing to install $skill_name: $dest_path is or contains its own source $source_path"
+      return 1
+    fi
+    # Identity as well, and only when the destination is a real entry, which
+    # is what the removal recurses into. A symlink there is unlinked, so
+    # nothing behind it is at risk — and -ef would follow it straight back to
+    # the source and refuse every ordinary reinstall.
+    if [ ! -L "$dest_entry" ] && [ -e "$dest_entry" ] && path_under_identity "$node" "$dest_entry"; then
+      print_error "Refusing to install $skill_name: $dest_path is another name for its own source $source_path"
+      return 1
+    fi
+    [ -L "$node" ] || break
+    depth=$((depth + 1))
+    if [ "$depth" -gt 40 ]; then
+      # Not reachable through a chain the kernel already resolved for test -d,
+      # which caps first. Kept because a walk bug should stop, not spin.
+      print_error "Refusing to install $skill_name: $source_path resolves through more links than this will follow"
+      return 1
+    fi
+    link="$(readlink "$node")" || break
+    case "$link" in
+    /*) node=$link ;;
+    *) node="${node_parent%/}/$link" ;;
+    esac
+  done
+
+  # Clear the destination. A symlink is unlinked, never recursed into: rm -rf
+  # reaches through one only when the path carries a trailing slash, which the
+  # normalization above strips, and unlinking says so rather than leaning on
+  # that. Anything else is a real
+  # file or directory, and deleting one from symlink mode is opt-in — a copy
+  # install left by this tool looks the same from here as content that was
+  # never ours.
+  if [ -L "$dest_entry" ]; then
+    if ! rm -f "$dest_entry"; then
+      print_error "Failed to remove the existing $skill_name at $dest_path"
+      return 1
+    fi
+  elif [ -e "$dest_entry" ]; then
+    if [ "$USE_SYMLINK" = true ] && [ "$USE_SYMLINK_FORCE" != true ]; then
+      print_error "$dest_path already exists and is not a symlink; pass --symlink-force to replace it"
+      return 1
+    fi
     print_warn "Removing existing installation: $dest_path"
-    rm -rf "$dest_path"
+    if ! rm -rf "$dest_entry"; then
+      print_error "Failed to remove the existing $skill_name at $dest_path"
+      return 1
+    fi
   fi
 
   if [ "$USE_SYMLINK" = true ] || [ "$USE_SYMLINK_FORCE" = true ]; then
     # Create symlink with absolute path
     print_info "Creating symlink for $skill_name..."
 
+    local ln_flags="-s"
+    local forced=""
     if [ "$USE_SYMLINK_FORCE" = true ]; then
-      ln -fs "$source_path" "$dest_path"
-      print_info "✓ Symlinked $skill_name (forced): $dest_path -> $source_path"
-    else
-      if ln -s "$source_path" "$dest_path" 2>/dev/null; then
-        print_info "✓ Symlinked $skill_name: $dest_path -> $source_path"
-      else
-        print_warn "Failed to create symlink for $skill_name"
-        echo -e "${YELLOW}[?]${NC} A file or directory already exists at: $dest_path"
-        echo -e "${YELLOW}[?]${NC} Do you want to force overwrite it? (y/N): "
-        read -r response
-        if [[ "$response" =~ ^[Yy]$ ]]; then
-          ln -fs "$source_path" "$dest_path"
-          print_info "✓ Symlinked $skill_name (forced): $dest_path -> $source_path"
-        else
-          print_error "Skipped $skill_name - user declined to overwrite"
-          return 1
-        fi
-      fi
+      ln_flags="-fs"
+      forced=" (forced)"
     fi
+
+    # ln writes its own reason to stderr, so this does not restate it.
+    if ! ln "$ln_flags" "$source_path" "$dest_entry"; then
+      print_error "Failed to symlink $skill_name to $dest_path"
+      return 1
+    fi
+    print_info "✓ Symlinked $skill_name$forced: $dest_path -> $source_path"
   else
     # Copy skill
     print_info "Installing $skill_name..."
-    cp -r "$source_path" "$dest_path"
+    if ! cp -r "$source_path" "$dest_entry"; then
+      print_error "Failed to copy $skill_name to $dest_path"
+      # Skill discovery only looks for SKILL.md, so a half-copied tree that got
+      # that far reads as a complete skill. Leave nothing rather than that —
+      # and say so if even that does not work, rather than letting set -e end
+      # the run here and leave the tree behind silently.
+      if ! rm -rf "$dest_entry"; then
+        print_warn "Could not remove the partial copy at $dest_path"
+      fi
+      return 1
+    fi
     print_info "✓ Installed $skill_name to $dest_path"
   fi
 }
@@ -425,11 +637,12 @@ while [[ $# -gt 0 ]]; do
         while IFS= read -r skill_path; do
           abs_path="$repo_root/${skill_path#./}"
           MARKETPLACE_SKILL_PATHS+=("$abs_path")
-          MARKETPLACE_SKILL_NAMES+=("$(basename "$abs_path")")
+          trimmed_path="${abs_path%/}"
+          MARKETPLACE_SKILL_NAMES+=("${trimmed_path##*/}")
         done < <(jq -r '.plugins[].skills[]' "$repo_root/.claude-plugin/marketplace.json")
       elif [ -f "$repo_root/SKILL.md" ]; then
         SINGLE_SKILL_REPO=true
-        SINGLE_SKILL_NAME="$(basename "$repo_root")"
+        SINGLE_SKILL_NAME="${repo_root##*/}"
         SINGLE_SKILL_PATH="$repo_root"
         SKILLS_SOURCE_DIR="$repo_root"
       else
@@ -516,7 +729,8 @@ if [ "$INSTALL_ALL" = true ]; then
     skill_count=0
     for skill_dir in "$SKILLS_SOURCE_DIR"/*/; do
       if [ -d "$skill_dir" ]; then
-        skill_name=$(basename "$skill_dir")
+        trimmed="${skill_dir%/}"
+        skill_name="${trimmed##*/}"
         if [ -f "$skill_dir/SKILL.md" ]; then
           install_skill "$skill_name"
           skill_count=$((skill_count + 1))
@@ -560,7 +774,7 @@ if [ "$USE_SYMLINK_FORCE" = true ]; then
   print_info "Installation mode: Symlink (force)"
   echo ""
   echo "  Skills are symlinked from: $SKILLS_SOURCE_DIR"
-  echo "  → Existing files were forcefully overwritten"
+  echo "  → Replaces a real file or directory at the destination"
   echo ""
 elif [ "$USE_SYMLINK" = true ]; then
   print_info "Installation mode: Symlink"
