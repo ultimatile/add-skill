@@ -113,6 +113,30 @@ path_within() {
   return 1
 }
 
+# True when the first path, or an ancestor of it, is the same file as the
+# second. Text cannot settle this: two paths can name one directory with no
+# resolver unifying them. A Linux bind mount is the plain case — mount --bind
+# leaves both spellings intact and pwd -P canonicalizes neither onto the
+# other — and -ef compares device and inode instead. It follows symlinks, so
+# the caller must only ask about a destination that would be removed
+# recursively.
+path_under_identity() {
+  local inner=$1 outer=$2
+  if [ -z "$inner" ] || [ -z "$outer" ] || [ ! -e "$outer" ]; then
+    return 1
+  fi
+  local cur=$inner prev=''
+  while [ "$cur" != "$prev" ]; do
+    if [ -e "$cur" ] && [ "$cur" -ef "$outer" ]; then
+      return 0
+    fi
+    prev=$cur
+    cur="${cur%/*}"
+    [ -z "$cur" ] && cur="/"
+  done
+  return 1
+}
+
 show_help() {
   cat <<'EOF'
 add-skill - Install skills from a local repository to a project directory
@@ -408,12 +432,11 @@ install_skill() {
   # Walked inline rather than through a helper that lists the chain, because a
   # filename may contain a newline and any line-delimited list would split it.
   #
-  # Text is enough here only because both sides are resolved the same way. cd
-  # plus pwd -P agrees with itself on paths that have more than one spelling —
-  # macOS firmlinks give /Users and /System/Volumes/Data/Users the same inode,
-  # and this canonicalizes both to the first. realpath does not: it returns
-  # whichever spelling it was handed, so using it on one side and pwd -P on the
-  # other would put the same directory in two namespaces.
+  # Resolve both sides the same way. cd plus pwd -P agrees with itself, while
+  # realpath returns whichever spelling it was handed, so mixing the two put
+  # one directory in two namespaces. That alone is not enough, though: a bind
+  # mount gives a directory two paths that no resolver unifies at all, which
+  # is what the identity comparison below is for.
   local node="$source_path" node_parent link depth=0
   while :; do
     node_parent="$(cd "$(dirname "$node")" 2>/dev/null && pwd -P)" || break
@@ -424,9 +447,19 @@ install_skill() {
       print_error "Refusing to install $skill_name: $dest_path is or contains its own source $source_path"
       return 1
     fi
+    # Identity as well, and only when the destination is a real entry, which
+    # is what the removal recurses into. A symlink there is unlinked, so
+    # nothing behind it is at risk — and -ef would follow it straight back to
+    # the source and refuse every ordinary reinstall.
+    if [ ! -L "$dest_entry" ] && [ -e "$dest_entry" ] && path_under_identity "$node" "$dest_entry"; then
+      print_error "Refusing to install $skill_name: $dest_path is another name for its own source $source_path"
+      return 1
+    fi
     [ -L "$node" ] || break
     depth=$((depth + 1))
     if [ "$depth" -gt 40 ]; then
+      # Not reachable through a chain the kernel already resolved for test -d,
+      # which caps first. Kept because a walk bug should stop, not spin.
       print_error "Refusing to install $skill_name: $source_path resolves through more links than this will follow"
       return 1
     fi

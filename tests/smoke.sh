@@ -177,6 +177,27 @@ assert_false "an unresolved inner is within nothing" path_within "" /a
 # the outer becomes "" and the pattern /* matches every absolute path.
 assert_false "an unresolved outer contains nothing" path_within /a ""
 
+# Identity, for the aliases text cannot see. A bind mount is the case this
+# exists for and cannot be created here; a symlink is the same shape — two
+# spellings, one inode — and does exercise the comparison.
+eval "$(sed -n '/^path_under_identity() {/,/^}/p' "$ADD_SKILL")"
+if ! type path_under_identity >/dev/null 2>&1; then
+  echo "could not lift path_under_identity out of $ADD_SKILL" >&2
+  exit 2
+fi
+mkdir -p "$WORK/ident/real/sub"
+ln -s "$WORK/ident/real" "$WORK/ident/alias"
+assert_true "a path is the same file as itself" \
+  path_under_identity "$WORK/ident/real" "$WORK/ident/real"
+assert_true "another spelling is the same file" \
+  path_under_identity "$WORK/ident/alias" "$WORK/ident/real"
+assert_true "and so is something beneath that spelling" \
+  path_under_identity "$WORK/ident/alias/sub" "$WORK/ident/real"
+assert_false "an unrelated path is not" \
+  path_under_identity "$WORK/ident/real" "$WORK/ident/real/sub"
+assert_false "a destination that does not exist holds nothing" \
+  path_under_identity "$WORK/ident/real" "$WORK/ident/nope"
+
 echo "[install succeeds]"
 reset_dest
 run "$WORK/o" "$WORK/e" --symlink
