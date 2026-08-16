@@ -334,13 +334,24 @@ install_skill() {
 
   # The removal below runs before the link or the copy, so installing a skill
   # onto its own source would delete that source and leave the install reading
-  # from nothing. Compare resolved paths: either side can arrive relative, via a
-  # symlinked parent, or with a .. component.
+  # from nothing. The destination can be the source in two ways, and the
+  # comparison has to catch both: it can be the source's own directory entry,
+  # which the removal deletes outright, or it can be what that entry points at,
+  # which the removal empties. Resolve parents on both sides so a relative path,
+  # a symlinked parent, or a .. component still compares correctly, and keep the
+  # final component unresolved for the entry test so a symlinked entry compares
+  # as itself rather than as its target.
   local dest_parent
   dest_parent="$(cd "$(dirname "$dest_path")" 2>/dev/null && pwd -P)" || dest_parent=""
-  if [ -n "$dest_parent" ] && [ "$dest_parent/$skill_name" = "$(cd "$source_path" && pwd -P)" ]; then
-    print_error "Refusing to install $skill_name onto its own source: $source_path"
-    return 1
+  if [ -n "$dest_parent" ]; then
+    local dest_entry source_entry source_target
+    dest_entry="$dest_parent/$skill_name"
+    source_entry="$(cd "$(dirname "$source_path")" && pwd -P)/$(basename "$source_path")"
+    source_target="$(cd "$source_path" && pwd -P)"
+    if [ "$dest_entry" = "$source_entry" ] || [ "$dest_entry" = "$source_target" ]; then
+      print_error "Refusing to install $skill_name onto its own source: $source_path"
+      return 1
+    fi
   fi
 
   # Remove existing installation if present (handles both directories and symlinks)

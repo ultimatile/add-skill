@@ -213,6 +213,25 @@ assert_true "the source is still a directory" test ! -L "$SELF/my-skill"
 cat "$WORK/o" "$WORK/e" >"$WORK/both"
 assert_contains "it says what it refused" "$WORK/both" '\[ERROR\].*own source'
 
+# The destination can also be the source's own entry when that entry is itself a
+# symlink. Resolving the source through it would compare the target instead and
+# let the removal delete the entry.
+for mode in --symlink ""; do
+  label=${mode:-copy mode}
+  LINKED="$WORK/linked-$$-${mode:-copy}"
+  mkdir -p "$LINKED/repo/skills" "$LINKED/elsewhere/alpha"
+  printf -- '---\nname: alpha\ndescription: smoke fixture\n---\n' >"$LINKED/elsewhere/alpha/SKILL.md"
+  ln -s "$LINKED/elsewhere/alpha" "$LINKED/repo/skills/alpha"
+  if [ -n "$mode" ]; then
+    run_at "$LINKED" "$LINKED/repo/skills" "$WORK/o" "$WORK/e" "$LINKED/repo" "$mode"
+  else
+    run_at "$LINKED" "$LINKED/repo/skills" "$WORK/o" "$WORK/e" "$LINKED/repo"
+  fi
+  assert_status "$label onto a symlinked source entry aborts" nonzero $?
+  assert_true "$label leaves the source entry pointing where it did" \
+    test "$(readlink "$LINKED/repo/skills/alpha")" = "$LINKED/elsewhere/alpha"
+done
+
 # A destination that cannot even be created is still a skill that could not be
 # installed, so it gets the same report as the ln and cp failures.
 echo "[reports a destination it cannot create]"
