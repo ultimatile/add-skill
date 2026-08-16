@@ -125,6 +125,8 @@ assert_status "re-running over the install exits 0" zero $?
 run "$WORK/o" "$WORK/e" --symlink-force
 assert_status "symlink-force exits 0" zero $?
 assert_true "symlink-force leaves a symlink behind" test -L "$DEST/alpha"
+assert_contains "symlink-force marks the per-skill line forced" "$WORK/o" '(forced)'
+assert_contains "symlink-force names ln -f in the summary" "$WORK/o" 'ln -f'
 
 reset_dest
 run "$WORK/o" "$WORK/e"

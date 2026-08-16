@@ -277,8 +277,8 @@ list_available_skills() {
 }
 
 # Returns non-zero when the skill could not be installed. Callers must stay bare
-# commands: a call placed in a condition, a pipeline, or the left side of ||
-# suppresses set -e, which is the only thing that turns that non-zero into the
+# commands: set -e ignores a failure in a condition, on the left of && or ||, or
+# under !, and that abort is the only thing turning this non-zero into the
 # documented "reports the reason and stops".
 install_skill() {
   local skill_name=$1
