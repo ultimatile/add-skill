@@ -75,6 +75,10 @@ wait_for_exit() {
   return 1
 }
 
+reset_dest() {
+  rm -rf "${DEST:?}"/*
+}
+
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/add-skill-smoke.XXXXXX")"
 SRC="$WORK/src"
 DEST="$WORK/proj/.claude/skills"
@@ -94,7 +98,7 @@ run() { # run <outfile> <errfile> <args...>
 echo "add-skill smoke tests ($ADD_SKILL)"
 
 echo "[install succeeds]"
-rm -rf "${DEST:?}"/*
+reset_dest
 run "$WORK/o" "$WORK/e" --symlink
 assert_status "symlink install exits 0" zero $?
 [ -L "$DEST/alpha" ] && [ -L "$DEST/bravo" ] &&
@@ -106,17 +110,17 @@ assert_status "re-running over the install exits 0" zero $?
 run "$WORK/o" "$WORK/e" --symlink-force
 assert_status "symlink-force exits 0" zero $?
 
-rm -rf "${DEST:?}"/*
+reset_dest
 run "$WORK/o" "$WORK/e"
 assert_status "copy install exits 0" zero $?
 [ -d "$DEST/alpha" ] && [ ! -L "$DEST/alpha" ] &&
   ok "copy install produces a real directory" || no "copy install produces a real directory"
 
-# An unwritable destination makes ln fail for a reason that is not "the target
-# already exists" — the case the removed prompt used to claim.
+# An unwritable destination makes ln fail while nothing occupies the target, so
+# the failure is never "the target already exists".
 echo "[install fails]"
 for mode in --symlink --symlink-force; do
-  rm -rf "${DEST:?}"/*
+  reset_dest
   chmod a-w "$DEST"
   run "$WORK/o" "$WORK/e" "$mode"
   status=$?
@@ -129,12 +133,23 @@ for mode in --symlink --symlink-force; do
   assert_absent "$mode asks no question" "$WORK/both" '(y/N)'
 done
 
-# The failure path must not read from stdin. A fifo held open by this script
-# delivers nothing and never signals end of file, so anything that reads will
-# block rather than fall through — which is what an agent harness or a
-# script(1)-style wrapper hands the command.
+# A failure must stop the run rather than carry on to the remaining skills.
+# Ask for a name the source does not have, followed by one it does.
+echo "[a failure stops the run]"
+reset_dest
+run "$WORK/o" "$WORK/e" --symlink --skill nosuch --skill alpha
+assert_status "an unknown skill aborts with non-zero status" nonzero $?
+[ ! -e "$DEST/alpha" ] &&
+  ok "the skill queued after the failure is not installed" ||
+  no "the skill queued after the failure is not installed"
+
+# The failure path must not read from stdin. A fifo this script holds open
+# delivers nothing and never signals end of file, so anything that reads it
+# blocks instead of falling through. That blocking-with-no-EOF property is what
+# an agent harness or a script(1)-style wrapper produces by handing the command
+# a terminal nobody types into; the fifo reproduces it without needing one.
 echo "[never waits for input]"
-rm -rf "${DEST:?}"/*
+reset_dest
 chmod a-w "$DEST"
 mkfifo "$WORK/fifo"
 exec 9<>"$WORK/fifo"
