@@ -40,7 +40,8 @@ no() {
 
 # assert_contains <label> <file> <pattern>
 assert_contains() {
-  if grep -q "$3" "$2"; then
+  # -- so a pattern beginning with - is a pattern, not an option
+  if grep -q -- "$3" "$2"; then
     ok "$1"
   else
     no "$1" "expected /$3/ in $(basename "$2"), got: $(tr '\n' '|' <"$2" | cut -c1-200)"
@@ -49,7 +50,7 @@ assert_contains() {
 
 # assert_absent <label> <file> <pattern>
 assert_absent() {
-  if grep -q "$3" "$2"; then
+  if grep -q -- "$3" "$2"; then
     no "$1" "unexpected /$3/ in $(basename "$2")"
   else
     ok "$1"
