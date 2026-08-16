@@ -56,11 +56,26 @@ assert_absent() {
   fi
 }
 
+# assert_true <label> <command...>  — the command's own status is the verdict
+assert_true() {
+  local label=$1
+  shift
+  if "$@"; then
+    ok "$label"
+  else
+    no "$label"
+  fi
+}
+
 # assert_status <label> <expected: zero|nonzero> <actual>
 assert_status() {
   case "$2" in
-  zero) [ "$3" -eq 0 ] && ok "$1" || no "$1" "expected exit 0, got $3" ;;
-  nonzero) [ "$3" -ne 0 ] && ok "$1" || no "$1" "expected non-zero exit, got $3" ;;
+  zero)
+    if [ "$3" -eq 0 ]; then ok "$1"; else no "$1" "expected exit 0, got $3"; fi
+    ;;
+  nonzero)
+    if [ "$3" -ne 0 ]; then ok "$1"; else no "$1" "expected non-zero exit, got $3"; fi
+    ;;
   esac
 }
 
@@ -101,34 +116,31 @@ echo "[install succeeds]"
 reset_dest
 run "$WORK/o" "$WORK/e" --symlink
 assert_status "symlink install exits 0" zero $?
-[ -L "$DEST/alpha" ] && [ -L "$DEST/bravo" ] &&
-  ok "both skills are symlinks" || no "both skills are symlinks"
+assert_true "alpha is a symlink" test -L "$DEST/alpha"
+assert_true "bravo is a symlink" test -L "$DEST/bravo"
 
 run "$WORK/o" "$WORK/e" --symlink
 assert_status "re-running over the install exits 0" zero $?
 
 run "$WORK/o" "$WORK/e" --symlink-force
 assert_status "symlink-force exits 0" zero $?
-[ -L "$DEST/alpha" ] &&
-  ok "symlink-force leaves a symlink behind" || no "symlink-force leaves a symlink behind"
+assert_true "symlink-force leaves a symlink behind" test -L "$DEST/alpha"
 
 reset_dest
 run "$WORK/o" "$WORK/e"
 assert_status "copy install exits 0" zero $?
-[ -d "$DEST/alpha" ] && [ ! -L "$DEST/alpha" ] &&
-  ok "copy install produces a real directory" || no "copy install produces a real directory"
+assert_true "copy install produces a directory" test -d "$DEST/alpha"
+assert_true "the copied skill is not a symlink" test ! -L "$DEST/alpha"
 
 # README promises the destination is replaced in every mode, copy included, so
 # a file left inside a previous copy must not survive the next one.
 echo stale >"$DEST/alpha/stale.txt"
 run "$WORK/o" "$WORK/e"
 assert_status "re-running the copy install exits 0" zero $?
-[ ! -e "$DEST/alpha/stale.txt" ] &&
-  ok "the copy install replaces what was there" ||
-  no "the copy install replaces what was there"
+assert_true "the copy install replaces what was there" test ! -e "$DEST/alpha/stale.txt"
 
-# An unwritable destination makes ln fail while nothing occupies the target, so
-# the failure is never "the target already exists".
+# An unwritable destination makes the link or the copy fail while nothing
+# occupies the target, so the failure is never "the target already exists".
 echo "[install fails]"
 # Each spec is "label|flag|tool": the flag to pass (empty for the default copy
 # mode) and the command whose own stderr must carry the reason. Kept as split
@@ -162,9 +174,7 @@ echo "[a failure stops the run]"
 reset_dest
 run "$WORK/o" "$WORK/e" --symlink --skill nosuch --skill alpha
 assert_status "an unknown skill aborts with non-zero status" nonzero $?
-[ ! -e "$DEST/alpha" ] &&
-  ok "the skill queued after the failure is not installed" ||
-  no "the skill queued after the failure is not installed"
+assert_true "the skill queued after the failure is not installed" test ! -e "$DEST/alpha"
 
 # The failure path must not read from stdin. A fifo this script holds open
 # delivers nothing and never signals end of file, so anything that reads it
