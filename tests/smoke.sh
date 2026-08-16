@@ -109,12 +109,23 @@ assert_status "re-running over the install exits 0" zero $?
 
 run "$WORK/o" "$WORK/e" --symlink-force
 assert_status "symlink-force exits 0" zero $?
+[ -L "$DEST/alpha" ] &&
+  ok "symlink-force leaves a symlink behind" || no "symlink-force leaves a symlink behind"
 
 reset_dest
 run "$WORK/o" "$WORK/e"
 assert_status "copy install exits 0" zero $?
 [ -d "$DEST/alpha" ] && [ ! -L "$DEST/alpha" ] &&
   ok "copy install produces a real directory" || no "copy install produces a real directory"
+
+# README promises the destination is replaced in every mode, copy included, so
+# a file left inside a previous copy must not survive the next one.
+echo stale >"$DEST/alpha/stale.txt"
+run "$WORK/o" "$WORK/e"
+assert_status "re-running the copy install exits 0" zero $?
+[ ! -e "$DEST/alpha/stale.txt" ] &&
+  ok "the copy install replaces what was there" ||
+  no "the copy install replaces what was there"
 
 # An unwritable destination makes ln fail while nothing occupies the target, so
 # the failure is never "the target already exists".

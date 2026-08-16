@@ -316,21 +316,19 @@ install_skill() {
     # Create symlink with absolute path
     print_info "Creating symlink for $skill_name..."
 
-    # The destination was cleared above, so a failure here is never "the
-    # target exists"; ln's own stderr message carries the actual reason.
+    local ln_flags="-s"
+    local forced=""
     if [ "$USE_SYMLINK_FORCE" = true ]; then
-      if ! ln -fs "$source_path" "$dest_path"; then
-        print_error "Failed to symlink $skill_name to $dest_path"
-        return 1
-      fi
-      print_info "✓ Symlinked $skill_name (forced): $dest_path -> $source_path"
-    else
-      if ! ln -s "$source_path" "$dest_path"; then
-        print_error "Failed to symlink $skill_name to $dest_path"
-        return 1
-      fi
-      print_info "✓ Symlinked $skill_name: $dest_path -> $source_path"
+      ln_flags="-fs"
+      forced=" (forced)"
     fi
+
+    # ln writes its own reason to stderr, so this only names the skill.
+    if ! ln "$ln_flags" "$source_path" "$dest_path"; then
+      print_error "Failed to symlink $skill_name to $dest_path"
+      return 1
+    fi
+    print_info "✓ Symlinked $skill_name$forced: $dest_path -> $source_path"
   else
     # Copy skill
     print_info "Installing $skill_name..."
