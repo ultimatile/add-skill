@@ -94,7 +94,13 @@ reset_dest() {
   rm -rf "${DEST:?}"/*
 }
 
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/add-skill-smoke.XXXXXX")"
+# Without set -e a failed mktemp would leave WORK empty and every path below
+# would resolve against the filesystem root.
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/add-skill-smoke.XXXXXX")" || WORK=""
+if [ -z "$WORK" ] || [ ! -d "$WORK" ]; then
+  echo "cannot create a temporary directory to work in" >&2
+  exit 2
+fi
 SRC="$WORK/src"
 DEST="$WORK/proj/.claude/skills"
 
@@ -252,7 +258,10 @@ POINTED="$WORK/pointed"
 mkdir -p "$POINTED/repo/skills" "$POINTED/dest/alpha"
 printf -- '---\nname: alpha\ndescription: smoke fixture\n---\n' >"$POINTED/dest/alpha/SKILL.md"
 ln -s "$POINTED/dest/alpha" "$POINTED/repo/skills/alpha"
-run_at "$POINTED" "$POINTED/dest" "$WORK/o" "$WORK/e" "$POINTED/repo" --symlink
+# --symlink-force, not --symlink: the destination is a real directory, so plain
+# --symlink refuses it before the guard is consulted and the assertions would
+# hold with the guard deleted.
+run_at "$POINTED" "$POINTED/dest" "$WORK/o" "$WORK/e" "$POINTED/repo" --symlink-force
 assert_status "installing onto what the source entry points at aborts" nonzero $?
 assert_true "the pointed-at content survives" test -f "$POINTED/dest/alpha/SKILL.md"
 
