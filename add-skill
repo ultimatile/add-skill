@@ -415,20 +415,26 @@ install_skill() {
   # whichever spelling it was handed, so using it on one side and pwd -P on the
   # other would put the same directory in two namespaces.
   local node="$source_path" node_parent link depth=0
-  while [ "$depth" -lt 40 ]; do
+  while :; do
     node_parent="$(cd "$(dirname "$node")" 2>/dev/null && pwd -P)" || break
     node="${node_parent%/}/$(basename "$node")"
+    # Compared as soon as it is formed, so no exit below can leave an entry
+    # unexamined — including the target the last link resolves to.
     if path_within "$node" "$dest_entry"; then
       print_error "Refusing to install $skill_name: $dest_path is or contains its own source $source_path"
       return 1
     fi
     [ -L "$node" ] || break
+    depth=$((depth + 1))
+    if [ "$depth" -gt 40 ]; then
+      print_error "Refusing to install $skill_name: $source_path resolves through more links than this will follow"
+      return 1
+    fi
     link="$(readlink "$node")" || break
     case "$link" in
     /*) node=$link ;;
     *) node="${node_parent%/}/$link" ;;
     esac
-    depth=$((depth + 1))
   done
 
   # Clear the destination. A symlink is unlinked, never recursed into: rm -rf

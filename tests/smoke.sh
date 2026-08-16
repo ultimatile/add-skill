@@ -172,7 +172,10 @@ assert_false "a parent is not within its child" path_within /a/b /a/b/c
 assert_true "everything is within the root" path_within /a/b /
 assert_true "the root is within itself" path_within / /
 assert_true "a doubled separator names the same place" path_within /tmp/x //tmp
-assert_false "an unresolved side is within nothing" path_within "" /a
+assert_false "an unresolved inner is within nothing" path_within "" /a
+# The other order is the one the empty guard is actually needed for: without it
+# the outer becomes "" and the pattern /* matches every absolute path.
+assert_false "an unresolved outer contains nothing" path_within /a ""
 
 echo "[install succeeds]"
 reset_dest
