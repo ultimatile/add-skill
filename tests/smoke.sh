@@ -117,10 +117,18 @@ if touch "$WORK/wperm/probe" 2>/dev/null; then
 fi
 chmod u+w "$WORK/wperm"
 
+# run_at <cwd> <install-path> <outfile> <errfile> <args...>
+run_at() {
+  local cwd=$1 install=$2 out=$3 err=$4
+  shift 4
+  (cd "$cwd" && SKILLS_INSTALL_PATH="$install" "$ADD_SKILL" "$@" </dev/null >"$out" 2>"$err")
+}
+
+# The common case: the standard fixture, installed into the standard destination.
 run() { # run <outfile> <errfile> <args...>
   local out=$1 err=$2
   shift 2
-  (cd "$WORK/proj" && SKILLS_INSTALL_PATH="$DEST" "$ADD_SKILL" "$SRC" "$@" </dev/null >"$out" 2>"$err")
+  run_at "$WORK/proj" "$DEST" "$out" "$err" "$SRC" "$@"
 }
 
 echo "add-skill smoke tests ($ADD_SKILL)"
@@ -198,7 +206,7 @@ echo "[refuses to install onto its own source]"
 SELF="$WORK/self"
 mkdir -p "$SELF/my-skill"
 printf -- '---\nname: my-skill\ndescription: smoke fixture\n---\n' >"$SELF/my-skill/SKILL.md"
-(cd "$SELF" && SKILLS_INSTALL_PATH="$SELF" "$ADD_SKILL" "$SELF/my-skill" --symlink </dev/null >"$WORK/o" 2>"$WORK/e")
+run_at "$SELF" "$SELF" "$WORK/o" "$WORK/e" "$SELF/my-skill" --symlink
 assert_status "installing onto its own source aborts" nonzero $?
 assert_true "the source file survives" test -f "$SELF/my-skill/SKILL.md"
 assert_true "the source is still a directory" test ! -L "$SELF/my-skill"
@@ -209,12 +217,25 @@ assert_contains "it says what it refused" "$WORK/both" '\[ERROR\].*own source'
 # installed, so it gets the same report as the ln and cp failures.
 echo "[reports a destination it cannot create]"
 mkdir -p "$WORK/locked" && chmod a-w "$WORK/locked"
-(cd "$WORK/proj" && SKILLS_INSTALL_PATH="$WORK/locked/skills" "$ADD_SKILL" "$SRC" --symlink </dev/null >"$WORK/o" 2>"$WORK/e")
+run_at "$WORK/proj" "$WORK/locked/skills" "$WORK/o" "$WORK/e" "$SRC" --symlink
 status=$?
 chmod u+w "$WORK/locked"
 assert_status "an uncreatable destination aborts" nonzero $status
 cat "$WORK/o" "$WORK/e" >"$WORK/both"
 assert_contains "it names the skill it could not install" "$WORK/both" '\[ERROR\].*alpha'
+
+# The removal only runs when something already occupies the destination, so an
+# unwritable parent with the entry present is what reaches its failure branch.
+echo "[reports an existing install it cannot clear]"
+reset_dest
+mkdir -p "$DEST/alpha"
+chmod a-w "$DEST"
+run "$WORK/o" "$WORK/e" --symlink
+status=$?
+chmod u+w "$DEST"
+assert_status "an unclearable install aborts" nonzero $status
+cat "$WORK/o" "$WORK/e" >"$WORK/both"
+assert_contains "it names the install it could not remove" "$WORK/both" '\[ERROR\].*alpha'
 
 # cp -r copies what it can before failing, and skill discovery only looks for
 # SKILL.md, so a half-copied tree would read as a complete skill.
@@ -227,6 +248,20 @@ assert_status "a partial copy aborts" nonzero $?
 assert_true "no half-copied skill is left behind" test ! -e "$DEST/alpha"
 chmod u+r "$SRC/skills/alpha/sub/locked.txt"
 rm -rf "$SRC/skills/alpha/sub"
+
+# --install symlinks the script into ~/.local/bin. When the script being run is
+# already the real file at that path, resolving it yields the destination
+# itself, and removing-then-linking would destroy the only copy.
+echo "[--install leaves a copy already at the destination alone]"
+FAKE="$WORK/home"
+mkdir -p "$FAKE/.local/bin"
+cp "$ADD_SKILL" "$FAKE/.local/bin/add-skill"
+chmod +x "$FAKE/.local/bin/add-skill"
+HOME="$FAKE" "$FAKE/.local/bin/add-skill" --install </dev/null >"$WORK/o" 2>"$WORK/e"
+assert_status "--install onto its own location exits 0" zero $?
+assert_true "the script is still a regular file" test -f "$FAKE/.local/bin/add-skill"
+assert_true "the script was not replaced by a symlink" test ! -L "$FAKE/.local/bin/add-skill"
+assert_true "the script still has content" test -s "$FAKE/.local/bin/add-skill"
 
 # The failure path must not read from stdin. A fifo this script holds open
 # delivers nothing and never signals end of file, so anything that reads it

@@ -184,11 +184,29 @@ self_install() {
 
   print_info "Installing add-skill to $install_path..."
 
-  mkdir -p "$install_dir"
+  if ! mkdir -p "$install_dir"; then
+    print_error "Failed to create $install_dir"
+    return 1
+  fi
+
+  # Resolving the earlier symlink keeps a symlinked install from pointing at
+  # itself, but the script can also be the real file sitting at the destination.
+  # Then the removal below would delete it and the link would point at nothing.
+  # Compare resolved paths: /tmp and /private/tmp name one directory on macOS,
+  # so the two unresolved strings can differ while naming the same file.
+  local install_dir_real
+  install_dir_real="$(cd "$install_dir" && pwd -P)"
+  if [ "$script_path" = "$install_dir_real/add-skill" ]; then
+    print_info "add-skill already lives at $install_path; leaving it as it is"
+    return 0
+  fi
 
   if [ -e "$install_path" ] || [ -L "$install_path" ]; then
     print_warn "Removing existing: $install_path"
-    rm -f "$install_path"
+    if ! rm -f "$install_path"; then
+      print_error "Failed to remove the existing $install_path"
+      return 1
+    fi
   fi
 
   ln -s "$script_path" "$install_path"
