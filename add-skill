@@ -95,6 +95,17 @@ path_within() {
   if [ -z "$inner" ] || [ -z "$outer" ]; then
     return 1
   fi
+  # The root directory is spelled "/", so appending a separator below would give
+  # the pattern //* and match nothing beneath it. Strip a trailing separator
+  # from both sides first; "/" then becomes "" and /* matches every path.
+  outer="${outer%/}"
+  inner="${inner%/}"
+  # A leading double separator is implementation-defined in POSIX but names the
+  # same directory on the systems this runs on. Collapse it too: this decides
+  # whether a removal may proceed, and treating two paths as related when they
+  # might not be only ever refuses an install, while missing a relation deletes.
+  while [ "${inner#//}" != "$inner" ]; do inner="${inner#/}"; done
+  while [ "${outer#//}" != "$outer" ]; do outer="${outer#/}"; done
   if [ "$inner" = "$outer" ]; then
     return 0
   fi
@@ -374,7 +385,11 @@ install_skill() {
   local dest_entry dest_parent
   dest_parent="$(cd "$(dirname "$dest_path")" 2>/dev/null && pwd -P)" || dest_parent=""
   if [ -n "$dest_parent" ]; then
-    dest_entry="$dest_parent/$(basename "$dest_path")"
+    # ${dest_parent%/} because a parent of "/" would otherwise join to //name.
+    # path_within collapses that too, so either half closes the hole; this one
+    # keeps dest_entry canonical for the removal and the link, and is the only
+    # one no test covers, since reaching it needs an install path of "/".
+    dest_entry="${dest_parent%/}/$(basename "$dest_path")"
   else
     dest_entry="$dest_path"
   fi
@@ -389,7 +404,7 @@ install_skill() {
   local source_parent source_entry source_target
   source_parent="$(cd "$(dirname "$source_path")" 2>/dev/null && pwd -P)" || source_parent=""
   source_entry=""
-  [ -n "$source_parent" ] && source_entry="$source_parent/$(basename "$source_path")"
+  [ -n "$source_parent" ] && source_entry="${source_parent%/}/$(basename "$source_path")"
   # realpath, not cd: cd follows the link and then needs to enter what it lands
   # on, so a source entry pointing at an unenterable directory would resolve to
   # nothing while source_entry names only the link, and the comparison would

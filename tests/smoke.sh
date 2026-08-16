@@ -56,6 +56,17 @@ assert_absent() {
   fi
 }
 
+# assert_false <label> <command...>
+assert_false() {
+  local label=$1
+  shift
+  if "$@"; then
+    no "$label"
+  else
+    ok "$label"
+  fi
+}
+
 # assert_true <label> <command...>  — the command's own status is the verdict
 assert_true() {
   local label=$1
@@ -144,6 +155,24 @@ run() { # run <outfile> <errfile> <args...>
 }
 
 echo "add-skill smoke tests ($ADD_SKILL)"
+
+# path_within decides the self-source guard. Its root cases cannot be reached
+# through a real install without an install path at /, so lift the function out
+# and exercise it directly.
+echo "[path_within]"
+eval "$(sed -n '/^path_within() {/,/^}/p' "$ADD_SKILL")"
+if ! type path_within >/dev/null 2>&1; then
+  echo "could not lift path_within out of $ADD_SKILL" >&2
+  exit 2
+fi
+assert_true "a path is within itself" path_within /a/b /a/b
+assert_true "a child is within its parent" path_within /a/b/c /a/b
+assert_false "a sibling with a shared prefix is not" path_within /a/bc /a/b
+assert_false "a parent is not within its child" path_within /a/b /a/b/c
+assert_true "everything is within the root" path_within /a/b /
+assert_true "the root is within itself" path_within / /
+assert_true "a doubled separator names the same place" path_within /tmp/x //tmp
+assert_false "an unresolved side is within nothing" path_within "" /a
 
 echo "[install succeeds]"
 reset_dest
