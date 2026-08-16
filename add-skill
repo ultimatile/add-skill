@@ -113,6 +113,31 @@ path_within() {
   return 1
 }
 
+# True when the first path, or an ancestor of it, is the same file as the
+# second. Text cannot settle this on its own: one directory can have two
+# spellings that no resolver unifies — on macOS /Users and
+# /System/Volumes/Data/Users share an inode, and realpath and pwd -P each
+# canonicalize to a different one of the pair, which is how the source and the
+# destination here come to be resolved into different namespaces. -ef compares
+# device and inode instead. It follows symlinks, so the caller must only ask
+# about a destination that would be removed recursively.
+path_under_identity() {
+  local inner=$1 outer=$2
+  if [ -z "$inner" ] || [ -z "$outer" ] || [ ! -e "$outer" ]; then
+    return 1
+  fi
+  local cur=$inner prev=""
+  while [ "$cur" != "$prev" ]; do
+    if [ -e "$cur" ] && [ "$cur" -ef "$outer" ]; then
+      return 0
+    fi
+    prev=$cur
+    cur="${cur%/*}"
+    [ -z "$cur" ] && cur="/"
+  done
+  return 1
+}
+
 show_help() {
   cat <<'EOF'
 add-skill - Install skills from a local repository to a project directory
@@ -244,12 +269,13 @@ self_install() {
   # Then the removal below would delete it and the link would point at nothing.
   # Compare resolved paths: /tmp and /private/tmp name one directory on macOS,
   # so the two unresolved strings can differ while naming the same file.
-  local install_dir_real
-  if ! install_dir_real="$(cd "$install_dir" 2>/dev/null && pwd -P)"; then
+  if ! (cd "$install_dir" 2>/dev/null); then
     print_error "Failed to enter $install_dir"
     return 1
   fi
-  if [ "$script_path" = "$install_dir_real/add-skill" ]; then
+  # -ef compares device and inode, so the two spellings a firmlink gives one
+  # directory still read as the same file.
+  if [ -e "$install_path" ] && [ "$script_path" -ef "$install_path" ]; then
     print_info "add-skill already lives at $install_path; leaving it as it is"
     report_path_state "$install_dir"
     return 0
@@ -413,6 +439,19 @@ install_skill() {
   source_target="$(realpath "$source_path" 2>/dev/null)" || source_target=""
   if path_within "$source_entry" "$dest_entry" || path_within "$source_target" "$dest_entry"; then
     print_error "Refusing to install $skill_name: $dest_path is or contains its own source $source_path"
+    return 1
+  fi
+  # Only when the destination is a real entry, which is the case the removal
+  # recurses into. A symlink there is unlinked, so nothing behind it is at risk
+  # — and asking by identity would follow it straight back to the source and
+  # refuse every ordinary reinstall.
+  # No test reaches this: constructing it needs two spellings of one directory
+  # that no resolver unifies, and a firmlink cannot be created on demand.
+  # path_under_identity itself is covered against the aliases macOS ships.
+  if [ ! -L "$dest_entry" ] && [ -e "$dest_entry" ] &&
+    { path_under_identity "$source_entry" "$dest_entry" ||
+      path_under_identity "$source_target" "$dest_entry"; }; then
+    print_error "Refusing to install $skill_name: $dest_path is another name for its own source $source_path"
     return 1
   fi
 
