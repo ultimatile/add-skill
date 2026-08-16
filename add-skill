@@ -189,6 +189,29 @@ Examples:
 EOF
 }
 
+# Whether add-skill ended up on PATH is worth saying however it got to
+# $install_dir, including when it was already there and nothing was installed.
+report_path_state() {
+  local install_dir=$1
+  if echo "$PATH" | tr ':' '\n' | grep -qx "$install_dir"; then
+    print_info "add-skill is now available in your PATH"
+    return 0
+  fi
+  echo ""
+  print_warn "$install_dir is not in your PATH"
+  echo "  Add the following to your shell configuration:"
+  echo ""
+  echo "  # For bash (~/.bashrc):"
+  echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+  echo ""
+  echo "  # For zsh (~/.zshrc):"
+  echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+  echo ""
+  echo "  # For fish (~/.config/fish/config.fish):"
+  echo "  fish_add_path \$HOME/.local/bin"
+  echo ""
+}
+
 # Install add-skill itself to ~/.local/bin
 self_install() {
   local script_path
@@ -217,6 +240,7 @@ self_install() {
   fi
   if [ "$script_path" = "$install_dir_real/add-skill" ]; then
     print_info "add-skill already lives at $install_path; leaving it as it is"
+    report_path_state "$install_dir"
     return 0
   fi
 
@@ -234,24 +258,7 @@ self_install() {
   fi
   print_info "Symlinked: $install_path -> $script_path"
 
-  # Check if ~/.local/bin is in PATH
-  if ! echo "$PATH" | tr ':' '\n' | grep -qx "$install_dir"; then
-    echo ""
-    print_warn "$install_dir is not in your PATH"
-    echo "  Add the following to your shell configuration:"
-    echo ""
-    echo "  # For bash (~/.bashrc):"
-    echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
-    echo ""
-    echo "  # For zsh (~/.zshrc):"
-    echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
-    echo ""
-    echo "  # For fish (~/.config/fish/config.fish):"
-    echo "  fish_add_path \$HOME/.local/bin"
-    echo ""
-  else
-    print_info "add-skill is now available in your PATH"
-  fi
+  report_path_state "$install_dir"
 }
 
 list_available_skills() {
@@ -657,7 +664,7 @@ if [ "$USE_SYMLINK_FORCE" = true ]; then
   print_info "Installation mode: Symlink (force)"
   echo ""
   echo "  Skills are symlinked from: $SKILLS_SOURCE_DIR"
-  echo "  → Real files at the destination were replaced"
+  echo "  → Replaces a real file or directory at the destination"
   echo ""
 elif [ "$USE_SYMLINK" = true ]; then
   print_info "Installation mode: Symlink"

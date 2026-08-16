@@ -147,7 +147,7 @@ run "$WORK/o" "$WORK/e" --symlink-force
 assert_status "symlink-force exits 0" zero $?
 assert_true "symlink-force leaves a symlink behind" test -L "$DEST/alpha"
 assert_contains "symlink-force marks the per-skill line forced" "$WORK/o" '(forced)'
-assert_contains "symlink-force names replacement in the summary" "$WORK/o" 'Real files'
+assert_contains "symlink-force names replacement in the summary" "$WORK/o" 'Replaces a real file'
 
 reset_dest
 run "$WORK/o" "$WORK/e"
@@ -366,6 +366,8 @@ assert_status "--install onto its own location exits 0" zero $?
 assert_true "the script is still a regular file" test -f "$FAKE/.local/bin/add-skill"
 assert_true "the script was not replaced by a symlink" test ! -L "$FAKE/.local/bin/add-skill"
 assert_true "the script still has content" test -s "$FAKE/.local/bin/add-skill"
+cat "$WORK/o" "$WORK/e" >"$WORK/both"
+assert_contains "it still says where PATH stands" "$WORK/both" 'PATH'
 
 # --install's own filesystem calls report the same way the skill path's do.
 echo "[--install reports what it could not do]"
