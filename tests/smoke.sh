@@ -287,6 +287,20 @@ assert_status "the first install exits 0" zero $?
 run_at "$TRAILING" "$TRAILING/dest" "$WORK/o" "$WORK/e" "$TRAILING/repo" --symlink --skill alpha/
 assert_true "a trailing slash does not reach through the link" test -f "$TRAILING/repo/skills/alpha/payload.txt"
 
+# The opposite direction is legitimate: a repository that is itself a skill,
+# installing into the .claude/skills inside it. The removal there only reaches
+# the destination, so the guard must not refuse it.
+OWN="$WORK/own"
+mkdir -p "$OWN/my-skill"
+printf -- '---\nname: my-skill\ndescription: smoke fixture\n---\n' >"$OWN/my-skill/SKILL.md"
+run_at "$OWN/my-skill" "$OWN/my-skill/.claude/skills" "$WORK/o" "$WORK/e" "$OWN/my-skill" --symlink
+assert_status "a single-skill repo installs inside its own tree" zero $?
+assert_true "that install is a symlink" test -L "$OWN/my-skill/.claude/skills/my-skill"
+rm -rf "$OWN/my-skill/.claude"
+run_at "$OWN/my-skill" "$OWN/my-skill/.claude/skills" "$WORK/o" "$WORK/e" "$OWN/my-skill"
+assert_status "the same holds in copy mode" zero $?
+assert_true "that install carries the skill file" test -f "$OWN/my-skill/.claude/skills/my-skill/SKILL.md"
+
 # A source directory that cannot be entered is still linkable, and was before
 # the guard existed, so the guard must not turn that into a failure.
 UNREADABLE="$WORK/unreadable"
@@ -368,6 +382,17 @@ chmod u+w "$FAKE_MK/.local"
 assert_status "--install aborts when it cannot create the directory" nonzero $status
 cat "$WORK/o" "$WORK/e" >"$WORK/both"
 assert_contains "--install names the directory it could not create" "$WORK/both" '\[ERROR\].*local/bin'
+
+# Removing write permission leaves the directory enterable; removing execute
+# permission does not, and that reaches a different call.
+FAKE_X="$WORK/home-x"
+mkdir -p "$FAKE_X/.local/bin" && chmod a-x "$FAKE_X/.local/bin"
+HOME="$FAKE_X" "$ADD_SKILL" --install </dev/null >"$WORK/o" 2>"$WORK/e"
+status=$?
+chmod u+x "$FAKE_X/.local/bin"
+assert_status "--install aborts when it cannot enter the directory" nonzero $status
+cat "$WORK/o" "$WORK/e" >"$WORK/both"
+assert_contains "--install names the directory it could not enter" "$WORK/both" '\[ERROR\].*local/bin'
 
 # The failure path must not read from stdin. A fifo this script holds open
 # delivers nothing and never signals end of file, so anything that reads it

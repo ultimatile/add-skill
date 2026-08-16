@@ -88,18 +88,17 @@ print_error() {
   echo -e "${RED}[ERROR]${NC} $1"
 }
 
-# True when two resolved paths are equal or one contains the other. An empty
-# argument means that path could not be resolved, which is not an overlap.
-paths_overlap() {
-  local a=$1 b=$2
-  if [ -z "$a" ] || [ -z "$b" ]; then
+# True when the first resolved path is the second or sits inside it. An empty
+# argument means that path could not be resolved, which is inside nothing.
+path_within() {
+  local inner=$1 outer=$2
+  if [ -z "$inner" ] || [ -z "$outer" ]; then
     return 1
   fi
-  if [ "$a" = "$b" ]; then
+  if [ "$inner" = "$outer" ]; then
     return 0
   fi
-  case "$a/" in "$b"/*) return 0 ;; esac
-  case "$b/" in "$a"/*) return 0 ;; esac
+  case "$inner/" in "$outer"/*) return 0 ;; esac
   return 1
 }
 
@@ -212,7 +211,10 @@ self_install() {
   # Compare resolved paths: /tmp and /private/tmp name one directory on macOS,
   # so the two unresolved strings can differ while naming the same file.
   local install_dir_real
-  install_dir_real="$(cd "$install_dir" && pwd -P)"
+  if ! install_dir_real="$(cd "$install_dir" 2>/dev/null && pwd -P)"; then
+    print_error "Failed to enter $install_dir"
+    return 1
+  fi
   if [ "$script_path" = "$install_dir_real/add-skill" ]; then
     print_info "add-skill already lives at $install_path; leaving it as it is"
     return 0
@@ -366,9 +368,11 @@ install_skill() {
 
   # The removal below runs before the link or the copy, so it must not reach the
   # source. Rather than enumerating the path shapes that could name the source,
-  # bound the relation: two resolved paths are equal, one contains the other, or
-  # they are disjoint, and only disjoint is safe. Compare against both the
-  # source's own entry and what that entry points at.
+  # bound the relation: what matters is whether the source lies inside what is
+  # about to be removed. The other direction — a destination inside the source,
+  # which is what installing a single-skill repo into its own .claude/skills
+  # does — is safe, because the removal only touches the destination itself.
+  # Compare against both the source's own entry and what that entry points at.
   local source_parent source_entry source_target
   source_parent="$(cd "$(dirname "$source_path")" 2>/dev/null && pwd -P)" || source_parent=""
   source_entry=""
@@ -377,8 +381,8 @@ install_skill() {
   # still be symlinked, so failing to resolve it drops that comparison rather
   # than the install.
   source_target="$(cd "$source_path" 2>/dev/null && pwd -P)" || source_target=""
-  if paths_overlap "$dest_entry" "$source_entry" || paths_overlap "$dest_entry" "$source_target"; then
-    print_error "Refusing to install $skill_name: $dest_entry overlaps its own source $source_path"
+  if path_within "$source_entry" "$dest_entry" || path_within "$source_target" "$dest_entry"; then
+    print_error "Refusing to install $skill_name: $dest_path is or contains its own source $source_path"
     return 1
   fi
 
@@ -388,17 +392,17 @@ install_skill() {
   # replacing it is opt-in.
   if [ -L "$dest_entry" ]; then
     if ! rm -f "$dest_entry"; then
-      print_error "Failed to remove the existing $skill_name at $dest_entry"
+      print_error "Failed to remove the existing $skill_name at $dest_path"
       return 1
     fi
   elif [ -e "$dest_entry" ]; then
     if [ "$USE_SYMLINK" = true ] && [ "$USE_SYMLINK_FORCE" != true ]; then
-      print_error "$dest_entry already exists and is not a link this tool made; pass --symlink-force to replace it"
+      print_error "$dest_path already exists and is not a link this tool made; pass --symlink-force to replace it"
       return 1
     fi
-    print_warn "Removing existing installation: $dest_entry"
+    print_warn "Removing existing installation: $dest_path"
     if ! rm -rf "$dest_entry"; then
-      print_error "Failed to remove the existing $skill_name at $dest_entry"
+      print_error "Failed to remove the existing $skill_name at $dest_path"
       return 1
     fi
   fi
@@ -416,21 +420,21 @@ install_skill() {
 
     # ln writes its own reason to stderr, so this does not restate it.
     if ! ln "$ln_flags" "$source_path" "$dest_entry"; then
-      print_error "Failed to symlink $skill_name to $dest_entry"
+      print_error "Failed to symlink $skill_name to $dest_path"
       return 1
     fi
-    print_info "✓ Symlinked $skill_name$forced: $dest_entry -> $source_path"
+    print_info "✓ Symlinked $skill_name$forced: $dest_path -> $source_path"
   else
     # Copy skill
     print_info "Installing $skill_name..."
     if ! cp -r "$source_path" "$dest_entry"; then
-      print_error "Failed to copy $skill_name to $dest_entry"
+      print_error "Failed to copy $skill_name to $dest_path"
       # Skill discovery only looks for SKILL.md, so a half-copied tree that got
       # that far reads as a complete skill. Leave nothing rather than that.
       rm -rf "$dest_entry"
       return 1
     fi
-    print_info "✓ Installed $skill_name to $dest_entry"
+    print_info "✓ Installed $skill_name to $dest_path"
   fi
 }
 
