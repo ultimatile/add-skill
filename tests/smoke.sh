@@ -271,9 +271,11 @@ assert_true "the pointed-at content survives" test -f "$POINTED/dest/alpha/SKILL
 NESTED="$WORK/nested"
 mkdir -p "$NESTED/repo/skills/sub/alpha"
 printf -- '---\nname: alpha\ndescription: smoke fixture\n---\n' >"$NESTED/repo/skills/sub/alpha/SKILL.md"
-run_at "$NESTED" "$NESTED/repo/skills" "$WORK/o" "$WORK/e" "$NESTED/repo" --symlink --skill sub/alpha
+run_at "$NESTED" "$NESTED/repo/skills" "$WORK/o" "$WORK/e" "$NESTED/repo" --symlink-force --skill sub/alpha
 assert_status "a slash-carrying skill name cannot slip past the guard" nonzero $?
 assert_true "the nested source survives" test -f "$NESTED/repo/skills/sub/alpha/SKILL.md"
+cat "$WORK/o" "$WORK/e" >"$WORK/both"
+assert_contains "the guard is what stopped it" "$WORK/both" 'is or contains its own source'
 
 # Containment, not just equality: a destination that is an ancestor of the
 # source would have rm -rf take the whole source tree with it.
@@ -281,9 +283,11 @@ ANCESTOR="$WORK/ancestor"
 mkdir -p "$ANCESTOR/inst/alpha/skills/alpha"
 printf -- '---\nname: alpha\ndescription: smoke fixture\n---\n' >"$ANCESTOR/inst/alpha/skills/alpha/SKILL.md"
 echo keep >"$ANCESTOR/inst/alpha/README.md"
-run_at "$ANCESTOR" "$ANCESTOR/inst" "$WORK/o" "$WORK/e" "$ANCESTOR/inst/alpha" --symlink
+run_at "$ANCESTOR" "$ANCESTOR/inst" "$WORK/o" "$WORK/e" "$ANCESTOR/inst/alpha" --symlink-force
 assert_status "a destination containing the source aborts" nonzero $?
 assert_true "the surrounding repository survives" test -f "$ANCESTOR/inst/alpha/README.md"
+cat "$WORK/o" "$WORK/e" >"$WORK/both"
+assert_contains "the guard is what stopped that too" "$WORK/both" 'is or contains its own source'
 
 # rm -rf through a trailing slash follows a symlink and empties its target, so
 # the removal has to work on the normalized entry.
@@ -311,6 +315,20 @@ rm -rf "$OWN/my-skill/.claude"
 run_at "$OWN/my-skill" "$OWN/my-skill/.claude/skills" "$WORK/o" "$WORK/e" "$OWN/my-skill"
 cat "$WORK/o" "$WORK/e" >"$WORK/both"
 assert_absent "copy mode is not refused there either" "$WORK/both" 'is or contains its own source'
+
+# cd follows a symlink and then has to enter what it lands on, so a source entry
+# pointing at an unenterable directory used to resolve to nothing and slip past
+# the guard: the destination was removed and replaced with a link cycle, exit 0.
+UNENTERABLE="$WORK/unenterable-target"
+mkdir -p "$UNENTERABLE/repo/skills" "$UNENTERABLE/dest/alpha"
+ln -s "$UNENTERABLE/dest/alpha" "$UNENTERABLE/repo/skills/alpha"
+chmod 600 "$UNENTERABLE/dest/alpha"
+run_at "$UNENTERABLE" "$UNENTERABLE/dest" "$WORK/o" "$WORK/e" "$UNENTERABLE/repo" --symlink-force --skill alpha
+status=$?
+chmod 700 "$UNENTERABLE/dest/alpha" 2>/dev/null
+assert_status "an unenterable symlink target does not slip past the guard" nonzero $status
+assert_true "the target directory survives" test -d "$UNENTERABLE/dest/alpha"
+assert_true "the destination did not become a link" test ! -L "$UNENTERABLE/dest/alpha"
 
 # A source directory that cannot be entered is still linkable, and was before
 # the guard existed, so the guard must not turn that into a failure.

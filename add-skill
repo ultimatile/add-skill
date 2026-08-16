@@ -384,17 +384,21 @@ install_skill() {
   source_parent="$(cd "$(dirname "$source_path")" 2>/dev/null && pwd -P)" || source_parent=""
   source_entry=""
   [ -n "$source_parent" ] && source_entry="$source_parent/$(basename "$source_path")"
-  # A source directory without execute permission cannot be entered, but it can
-  # still be symlinked, so failing to resolve it drops that comparison rather
-  # than the install.
-  source_target="$(cd "$source_path" 2>/dev/null && pwd -P)" || source_target=""
+  # realpath, not cd: cd follows the link and then needs to enter what it lands
+  # on, so a source entry pointing at an unenterable directory would resolve to
+  # nothing while source_entry names only the link, and the comparison would
+  # miss the relationship entirely. Resolving a path needs no such permission,
+  # and it follows a chain of any length.
+  source_target="$(realpath "$source_path" 2>/dev/null)" || source_target=""
   if path_within "$source_entry" "$dest_entry" || path_within "$source_target" "$dest_entry"; then
     print_error "Refusing to install $skill_name: $dest_path is or contains its own source $source_path"
     return 1
   fi
 
-  # Clear the destination. A symlink is unlinked rather than followed, because
-  # rm -rf through a link deletes what it points at. Anything else is a real
+  # Clear the destination. A symlink is unlinked, never recursed into: rm -rf
+  # reaches through one only when the path carries a trailing slash, which the
+  # normalization above strips, and unlinking says so rather than leaning on
+  # that. Anything else is a real
   # file or directory, and deleting one from symlink mode is opt-in — a copy
   # install left by this tool looks the same from here as content that was
   # never ours.
