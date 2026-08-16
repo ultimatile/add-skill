@@ -387,9 +387,10 @@ install_skill() {
   fi
 
   # Clear the destination. A symlink is unlinked rather than followed, because
-  # rm -rf through a link deletes what it points at. Anything else is real
-  # content, and in symlink mode it is not something this tool put there, so
-  # replacing it is opt-in.
+  # rm -rf through a link deletes what it points at. Anything else is a real
+  # file or directory, and deleting one from symlink mode is opt-in — a copy
+  # install left by this tool looks the same from here as content that was
+  # never ours.
   if [ -L "$dest_entry" ]; then
     if ! rm -f "$dest_entry"; then
       print_error "Failed to remove the existing $skill_name at $dest_path"
@@ -397,7 +398,7 @@ install_skill() {
     fi
   elif [ -e "$dest_entry" ]; then
     if [ "$USE_SYMLINK" = true ] && [ "$USE_SYMLINK_FORCE" != true ]; then
-      print_error "$dest_path already exists and is not a link this tool made; pass --symlink-force to replace it"
+      print_error "$dest_path already exists and is not a symlink; pass --symlink-force to replace it"
       return 1
     fi
     print_warn "Removing existing installation: $dest_path"

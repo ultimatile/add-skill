@@ -297,9 +297,11 @@ run_at "$OWN/my-skill" "$OWN/my-skill/.claude/skills" "$WORK/o" "$WORK/e" "$OWN/
 assert_status "a single-skill repo installs inside its own tree" zero $?
 assert_true "that install is a symlink" test -L "$OWN/my-skill/.claude/skills/my-skill"
 rm -rf "$OWN/my-skill/.claude"
+# Only that the guard allows it: whether cp itself copies a tree into its own
+# subtree differs between BSD and GNU cp, and that predates this change.
 run_at "$OWN/my-skill" "$OWN/my-skill/.claude/skills" "$WORK/o" "$WORK/e" "$OWN/my-skill"
-assert_status "the same holds in copy mode" zero $?
-assert_true "that install carries the skill file" test -f "$OWN/my-skill/.claude/skills/my-skill/SKILL.md"
+cat "$WORK/o" "$WORK/e" >"$WORK/both"
+assert_absent "copy mode is not refused there either" "$WORK/both" 'is or contains its own source'
 
 # A source directory that cannot be entered is still linkable, and was before
 # the guard existed, so the guard must not turn that into a failure.
@@ -327,15 +329,17 @@ assert_contains "it names the skill it could not install" "$WORK/both" '\[ERROR\
 # The removal only runs when something already occupies the destination, so an
 # unwritable parent with the entry present is what reaches its failure branch.
 echo "[reports an existing install it cannot clear]"
+# --symlink-force, not --symlink: plain --symlink refuses a real directory
+# before it ever tries to remove one, so it never reaches this branch.
 reset_dest
 mkdir -p "$DEST/alpha"
 chmod a-w "$DEST"
-run "$WORK/o" "$WORK/e" --symlink
+run "$WORK/o" "$WORK/e" --symlink-force
 status=$?
 chmod u+w "$DEST"
 assert_status "an unclearable install aborts" nonzero $status
 cat "$WORK/o" "$WORK/e" >"$WORK/both"
-assert_contains "it names the install it could not remove" "$WORK/both" '\[ERROR\].*alpha'
+assert_contains "it names the install it could not remove" "$WORK/both" 'Failed to remove'
 
 # cp -r copies what it can before failing, and skill discovery only looks for
 # SKILL.md, so a half-copied tree would read as a complete skill.
