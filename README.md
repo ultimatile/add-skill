@@ -71,7 +71,7 @@ Codex searches project-level locations before global ones, but same-name skills 
 - **Symlink** (`--symlink`): References the source repo directly. Updates automatically on `git pull`.
 - **Symlink force** (`--symlink-force`): Same as `--symlink`, but also replaces a real file or directory at the destination.
 
-A symlink left by an earlier install is replaced in every mode, and is unlinked rather than followed, so whatever it points at is untouched. A real file or directory at the destination is replaced by copy mode and by `--symlink-force`; plain `--symlink` refuses it and says so. An install whose destination is, or contains, its own source is refused. A destination *inside* the source is fine — that is what a repository which is itself a skill does when it installs into the `.claude/skills` within it.
+A symlink left by an earlier install is replaced in every mode, and is unlinked rather than followed, so whatever it points at is untouched. A real file or directory at the destination is replaced by copy mode and by `--symlink-force`; plain `--symlink` refuses it and says so. An install whose destination is, or contains, its own source is refused. A destination *inside* the source is not — a repository that is itself a skill can symlink into the `.claude/skills` within it. Use `--symlink` for that: copy mode would ask `cp` to copy a tree into its own subtree, which GNU `cp` declines outright and BSD `cp` completes with the nested copy truncated.
 
 Nothing prompts for confirmation — if a skill cannot be installed, `add-skill` reports the reason and exits non-zero without installing the rest.
 
