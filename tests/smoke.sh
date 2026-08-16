@@ -435,6 +435,18 @@ assert_status "an unclearable install aborts" nonzero $status
 cat "$WORK/o" "$WORK/e" >"$WORK/both"
 assert_contains "it names the install it could not remove" "$WORK/both" 'Failed to remove'
 
+# The other removal branch. A symlink is unlinked rather than recursed into,
+# and that call can fail on its own; no fixture above reaches it.
+reset_dest
+ln -s "$SRC/skills/alpha" "$DEST/alpha"
+chmod a-w "$DEST"
+run "$WORK/o" "$WORK/e" --symlink
+status=$?
+chmod u+w "$DEST"
+assert_status "an unremovable link aborts" nonzero $status
+cat "$WORK/o" "$WORK/e" >"$WORK/both"
+assert_contains "it names the link it could not remove" "$WORK/both" 'Failed to remove'
+
 # cp -r copies what it can before failing, and skill discovery only looks for
 # SKILL.md, so a half-copied tree would read as a complete skill.
 echo "[leaves nothing behind after a partial copy]"
