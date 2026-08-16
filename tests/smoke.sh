@@ -389,6 +389,18 @@ run_at "$NEWLINE" "$NEWLINE/repo/skills" "$WORK/o" "$WORK/e" "$NEWLINE/repo" --s
 assert_status "a newline in the name does not split the comparison" nonzero $?
 assert_true "the oddly named source survives" test -f "$NEWLINE/repo/skills/$odd/SKILL.md"
 
+# Command substitution strips every trailing newline, so a name ending in one
+# used to resolve to the sibling of that name and clear that instead.
+TRAILNL="$WORK/trailnl"
+odd=$'alpha\n'
+mkdir -p "$TRAILNL/repo/skills/alpha" "$TRAILNL/repo/skills/$odd" "$TRAILNL/dest/alpha"
+printf -- '---\nname: alpha\ndescription: smoke fixture\n---\n' >"$TRAILNL/repo/skills/alpha/SKILL.md"
+printf -- '---\nname: alpha\ndescription: smoke fixture\n---\n' >"$TRAILNL/repo/skills/$odd/SKILL.md"
+echo marker >"$TRAILNL/dest/alpha/keep.txt"
+run_at "$TRAILNL" "$TRAILNL/dest" "$WORK/o" "$WORK/e" "$TRAILNL/repo" --symlink-force --skill "$odd"
+assert_status "a name ending in a newline installs" zero $?
+assert_true "the sibling of that name is untouched" test -f "$TRAILNL/dest/alpha/keep.txt"
+
 # The destination can sit in the middle of the source's resolution chain, where
 # it is neither the entry nor what the entry finally reaches. Unlinking it there
 # and pointing it back at the source closes a cycle.

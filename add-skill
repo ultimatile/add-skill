@@ -408,13 +408,18 @@ install_skill() {
   # resolving the parent settles a relative path or a .. component. The final
   # component stays unresolved so a symlinked destination is still the link.
   local dest_entry dest_parent
-  dest_parent="$(cd "$(dirname "$dest_path")" 2>/dev/null && pwd -P)" || dest_parent=""
+  local dest_dir="${dest_path%/*}"
+  [ -z "$dest_dir" ] && dest_dir="/"
+  dest_parent="$(cd "$dest_dir" 2>/dev/null && pwd -P)" || dest_parent=""
   if [ -n "$dest_parent" ]; then
     # ${dest_parent%/} because a parent of "/" would otherwise join to //name.
     # path_within collapses that too, so either half closes the hole; this one
     # keeps dest_entry canonical for the removal and the link, and is the only
     # one no test covers, since reaching it needs an install path of "/".
-    dest_entry="${dest_parent%/}/$(basename "$dest_path")"
+    # ${x##*/} rather than basename: command substitution strips every
+    # trailing newline, and a filename may end in one, which would silently
+    # retarget this at the sibling of that name.
+    dest_entry="${dest_parent%/}/${dest_path##*/}"
   else
     dest_entry="$dest_path"
   fi
@@ -437,10 +442,12 @@ install_skill() {
   # one directory in two namespaces. That alone is not enough, though: a bind
   # mount gives a directory two paths that no resolver unifies at all, which
   # is what the identity comparison below is for.
-  local node="$source_path" node_parent link depth=0
+  local node="$source_path" node_dir node_parent link depth=0
   while :; do
-    node_parent="$(cd "$(dirname "$node")" 2>/dev/null && pwd -P)" || break
-    node="${node_parent%/}/$(basename "$node")"
+    node_dir="${node%/*}"
+    [ -z "$node_dir" ] && node_dir="/"
+    node_parent="$(cd "$node_dir" 2>/dev/null && pwd -P)" || break
+    node="${node_parent%/}/${node##*/}"
     # Compared as soon as it is formed, so no exit below can leave an entry
     # unexamined — including the target the last link resolves to.
     if path_within "$node" "$dest_entry"; then
