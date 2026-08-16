@@ -400,6 +400,19 @@ run_at "$NEWLINE" "$NEWLINE/repo/skills" "$WORK/o" "$WORK/e" "$NEWLINE/repo" --s
 assert_status "a newline in the name does not split the comparison" nonzero $?
 assert_true "the oddly named source survives" test -f "$NEWLINE/repo/skills/$odd/SKILL.md"
 
+# Discovery names each skill from its directory, and that reading has to keep
+# a trailing newline too: losing it here hands install_skill a name no such
+# directory has.
+DISCOVER="$WORK/discover"
+quirk=$'gamma\n'
+mkdir -p "$DISCOVER/repo/skills/$quirk" "$DISCOVER/repo/skills/delta" "$DISCOVER/dest"
+printf -- '---\nname: gamma\ndescription: smoke fixture\n---\n' >"$DISCOVER/repo/skills/$quirk/SKILL.md"
+printf -- '---\nname: delta\ndescription: smoke fixture\n---\n' >"$DISCOVER/repo/skills/delta/SKILL.md"
+run_at "$DISCOVER" "$DISCOVER/dest" "$WORK/o" "$WORK/e" "$DISCOVER/repo" --symlink
+assert_status "a repository with an oddly named skill installs" zero $?
+assert_true "the odd name is installed as it is" test -L "$DISCOVER/dest/$quirk"
+assert_true "and its neighbour is too" test -L "$DISCOVER/dest/delta"
+
 # Command substitution strips every trailing newline, so a name ending in one
 # used to resolve to the sibling of that name and clear that instead.
 TRAILNL="$WORK/trailnl"

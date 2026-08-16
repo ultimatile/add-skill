@@ -338,7 +338,10 @@ list_available_skills() {
   local found=false
   for skill_dir in "$SKILLS_SOURCE_DIR"/*/; do
     if [ -d "$skill_dir" ]; then
-      local skill_name=$(basename "$skill_dir")
+      # Not basename: command substitution strips a trailing newline, and a
+      # directory name may end in one.
+      local trimmed="${skill_dir%/}"
+      local skill_name="${trimmed##*/}"
       if [ -f "$skill_dir/SKILL.md" ]; then
         # Extract description from YAML frontmatter if available
         local description=$(awk '/^---$/,/^---$/{if(/^description:/) {sub(/^description: */, ""); print; exit}}' "$skill_dir/SKILL.md")
@@ -539,8 +542,12 @@ install_skill() {
     if ! cp -r "$source_path" "$dest_entry"; then
       print_error "Failed to copy $skill_name to $dest_path"
       # Skill discovery only looks for SKILL.md, so a half-copied tree that got
-      # that far reads as a complete skill. Leave nothing rather than that.
-      rm -rf "$dest_entry"
+      # that far reads as a complete skill. Leave nothing rather than that —
+      # and say so if even that does not work, rather than letting set -e end
+      # the run here and leave the tree behind silently.
+      if ! rm -rf "$dest_entry"; then
+        print_warn "Could not remove the partial copy at $dest_path"
+      fi
       return 1
     fi
     print_info "✓ Installed $skill_name to $dest_path"
@@ -630,11 +637,12 @@ while [[ $# -gt 0 ]]; do
         while IFS= read -r skill_path; do
           abs_path="$repo_root/${skill_path#./}"
           MARKETPLACE_SKILL_PATHS+=("$abs_path")
-          MARKETPLACE_SKILL_NAMES+=("$(basename "$abs_path")")
+          trimmed_path="${abs_path%/}"
+          MARKETPLACE_SKILL_NAMES+=("${trimmed_path##*/}")
         done < <(jq -r '.plugins[].skills[]' "$repo_root/.claude-plugin/marketplace.json")
       elif [ -f "$repo_root/SKILL.md" ]; then
         SINGLE_SKILL_REPO=true
-        SINGLE_SKILL_NAME="$(basename "$repo_root")"
+        SINGLE_SKILL_NAME="${repo_root##*/}"
         SINGLE_SKILL_PATH="$repo_root"
         SKILLS_SOURCE_DIR="$repo_root"
       else
@@ -721,7 +729,8 @@ if [ "$INSTALL_ALL" = true ]; then
     skill_count=0
     for skill_dir in "$SKILLS_SOURCE_DIR"/*/; do
       if [ -d "$skill_dir" ]; then
-        skill_name=$(basename "$skill_dir")
+        trimmed="${skill_dir%/}"
+        skill_name="${trimmed##*/}"
         if [ -f "$skill_dir/SKILL.md" ]; then
           install_skill "$skill_name"
           skill_count=$((skill_count + 1))
