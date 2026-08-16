@@ -113,50 +113,6 @@ path_within() {
   return 1
 }
 
-# Emit every entry the source resolves through, one per line: the entry itself
-# with its parent resolved, then each symlink target, ending at a non-symlink.
-# readlink rather than cd, so a target that cannot be entered still resolves.
-source_chain() {
-  local path=$1 parent link depth=0
-  while [ "$depth" -lt 40 ]; do
-    parent="$(cd "$(dirname "$path")" 2>/dev/null && pwd -P)" || return 0
-    path="${parent%/}/$(basename "$path")"
-    printf '%s\n' "$path"
-    [ -L "$path" ] || return 0
-    link="$(readlink "$path")" || return 0
-    case "$link" in
-    /*) path=$link ;;
-    *) path="${parent%/}/$link" ;;
-    esac
-    depth=$((depth + 1))
-  done
-}
-
-# True when the first path, or an ancestor of it, is the same file as the
-# second. Text cannot settle this on its own: one directory can have two
-# spellings that no resolver unifies — on macOS /Users and
-# /System/Volumes/Data/Users share an inode, and realpath and pwd -P each
-# canonicalize to a different one of the pair, which is how the source and the
-# destination here come to be resolved into different namespaces. -ef compares
-# device and inode instead. It follows symlinks, so the caller must only ask
-# about a destination that would be removed recursively.
-path_under_identity() {
-  local inner=$1 outer=$2
-  if [ -z "$inner" ] || [ -z "$outer" ] || [ ! -e "$outer" ]; then
-    return 1
-  fi
-  local cur=$inner prev=""
-  while [ "$cur" != "$prev" ]; do
-    if [ -e "$cur" ] && [ "$cur" -ef "$outer" ]; then
-      return 0
-    fi
-    prev=$cur
-    cur="${cur%/*}"
-    [ -z "$cur" ] && cur="/"
-  done
-  return 1
-}
-
 show_help() {
   cat <<'EOF'
 add-skill - Install skills from a local repository to a project directory
@@ -449,23 +405,31 @@ install_skill() {
   # Compare every entry the source resolves through, not just its ends: the
   # destination can be a link in the middle, and unlinking it there leaves the
   # source pointing at what this then creates — a cycle, reported as success.
-  local node
-  while IFS= read -r node; do
+  # Walked inline rather than through a helper that lists the chain, because a
+  # filename may contain a newline and any line-delimited list would split it.
+  #
+  # Text is enough here only because both sides are resolved the same way. cd
+  # plus pwd -P agrees with itself on paths that have more than one spelling —
+  # macOS firmlinks give /Users and /System/Volumes/Data/Users the same inode,
+  # and this canonicalizes both to the first. realpath does not: it returns
+  # whichever spelling it was handed, so using it on one side and pwd -P on the
+  # other would put the same directory in two namespaces.
+  local node="$source_path" node_parent link depth=0
+  while [ "$depth" -lt 40 ]; do
+    node_parent="$(cd "$(dirname "$node")" 2>/dev/null && pwd -P)" || break
+    node="${node_parent%/}/$(basename "$node")"
     if path_within "$node" "$dest_entry"; then
       print_error "Refusing to install $skill_name: $dest_path is or contains its own source $source_path"
       return 1
     fi
-    # Identity only when the destination is a real entry, which is the case the
-    # removal recurses into. A symlink there is unlinked, so nothing behind it
-    # is at risk — and -ef would follow it straight back to the source and
-    # refuse every ordinary reinstall. No test reaches this branch: it needs two
-    # spellings of one directory that no resolver unifies, and a firmlink cannot
-    # be created on demand. path_under_identity itself is covered directly.
-    if [ ! -L "$dest_entry" ] && [ -e "$dest_entry" ] && path_under_identity "$node" "$dest_entry"; then
-      print_error "Refusing to install $skill_name: $dest_path is another name for its own source $source_path"
-      return 1
-    fi
-  done < <(source_chain "$source_path")
+    [ -L "$node" ] || break
+    link="$(readlink "$node")" || break
+    case "$link" in
+    /*) node=$link ;;
+    *) node="${node_parent%/}/$link" ;;
+    esac
+    depth=$((depth + 1))
+  done
 
   # Clear the destination. A symlink is unlinked, never recursed into: rm -rf
   # reaches through one only when the path carries a trailing slash, which the

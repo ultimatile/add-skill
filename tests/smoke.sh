@@ -174,25 +174,6 @@ assert_true "the root is within itself" path_within / /
 assert_true "a doubled separator names the same place" path_within /tmp/x //tmp
 assert_false "an unresolved side is within nothing" path_within "" /a
 
-# Two spellings of one directory that no resolver unifies. macOS firmlinks give
-# one; there is no portable way to create such an alias, so where the platform
-# has none this case cannot be constructed and says so rather than passing.
-eval "$(sed -n '/^path_under_identity() {/,/^}/p' "$ADD_SKILL")"
-if ! type path_under_identity >/dev/null 2>&1; then
-  echo "could not lift path_under_identity out of $ADD_SKILL" >&2
-  exit 2
-fi
-assert_false "identity says nothing about a destination that does not exist" \
-  path_under_identity /Users "$WORK/nope"
-if [ -d /System/Volumes/Data/Users ] && [ /Users -ef /System/Volumes/Data/Users ]; then
-  assert_true "a filesystem alias counts as the same directory" \
-    path_under_identity /System/Volumes/Data/Users /Users
-  assert_true "and so does a path beneath one" \
-    path_under_identity /System/Volumes/Data/Users/ultimatile /Users
-else
-  echo "  skip - no filesystem alias on this platform to exercise identity with"
-fi
-
 echo "[install succeeds]"
 reset_dest
 run "$WORK/o" "$WORK/e" --symlink
@@ -372,6 +353,17 @@ rm -rf "$OWN/my-skill/.claude"
 run_at "$OWN/my-skill" "$OWN/my-skill/.claude/skills" "$WORK/o" "$WORK/e" "$OWN/my-skill"
 cat "$WORK/o" "$WORK/e" >"$WORK/both"
 assert_absent "copy mode is not refused there either" "$WORK/both" 'is or contains its own source'
+
+# A filename may contain a newline. Any line-delimited list of the chain would
+# split such a name into unrelated entries and lose the relationship.
+NEWLINE="$WORK/newline"
+mkdir -p "$NEWLINE/repo/skills"
+odd="$(printf 'alpha\nbeta')"
+mkdir -p "$NEWLINE/repo/skills/$odd"
+printf -- '---\nname: alpha\ndescription: smoke fixture\n---\n' >"$NEWLINE/repo/skills/$odd/SKILL.md"
+run_at "$NEWLINE" "$NEWLINE/repo/skills" "$WORK/o" "$WORK/e" "$NEWLINE/repo" --symlink-force --skill "$odd"
+assert_status "a newline in the name does not split the comparison" nonzero $?
+assert_true "the oddly named source survives" test -f "$NEWLINE/repo/skills/$odd/SKILL.md"
 
 # The destination can sit in the middle of the source's resolution chain, where
 # it is neither the entry nor what the entry finally reaches. Unlinking it there
