@@ -329,7 +329,13 @@ list_available_skills() {
 # thing turning this non-zero into the documented "reports the reason and
 # stops".
 install_skill() {
+  # A --skill argument arrives as typed, and shell completion appends a slash to
+  # a directory name. Strip it here so the source path, the destination and the
+  # messages all name the same thing.
   local skill_name=$1
+  while [ "${skill_name%/}" != "$skill_name" ]; do
+    skill_name="${skill_name%/}"
+  done
   local source_path
   # Resolve source path based on discovery mode
   if [ "$MARKETPLACE_MODE" = true ]; then

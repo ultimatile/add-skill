@@ -96,7 +96,13 @@ reset_dest() {
 
 # Without set -e a failed mktemp would leave WORK empty and every path below
 # would resolve against the filesystem root.
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/add-skill-smoke.XXXXXX")" || WORK=""
+# TMPDIR conventionally carries a trailing slash, which would leave every path
+# below with a doubled separator that cd collapses and a string compare does not.
+tmp_root="${TMPDIR:-/tmp}"
+while [ "${tmp_root%/}" != "$tmp_root" ]; do
+  tmp_root="${tmp_root%/}"
+done
+WORK="$(mktemp -d "$tmp_root/add-skill-smoke.XXXXXX")" || WORK=""
 if [ -z "$WORK" ] || [ ! -d "$WORK" ]; then
   echo "cannot create a temporary directory to work in" >&2
   exit 2
@@ -298,7 +304,10 @@ echo payload >"$TRAILING/repo/skills/alpha/payload.txt"
 run_at "$TRAILING" "$TRAILING/dest" "$WORK/o" "$WORK/e" "$TRAILING/repo" --symlink --skill alpha
 assert_status "the first install exits 0" zero $?
 run_at "$TRAILING" "$TRAILING/dest" "$WORK/o" "$WORK/e" "$TRAILING/repo" --symlink --skill alpha/
+assert_status "a trailing-slash name still installs" zero $?
 assert_true "a trailing slash does not reach through the link" test -f "$TRAILING/repo/skills/alpha/payload.txt"
+assert_true "the destination is still the expected link" \
+  test "$(readlink "$TRAILING/dest/alpha")" = "$TRAILING/repo/skills/alpha"
 
 # The opposite direction is legitimate: a repository that is itself a skill,
 # installing into the .claude/skills inside it. The removal there only reaches
@@ -351,7 +360,7 @@ status=$?
 chmod u+w "$WORK/locked"
 assert_status "an uncreatable destination aborts" nonzero $status
 cat "$WORK/o" "$WORK/e" >"$WORK/both"
-assert_contains "it names the skill it could not install" "$WORK/both" '\[ERROR\].*alpha'
+assert_contains "it names the destination it could not create" "$WORK/both" 'Failed to create.*alpha'
 
 # The removal only runs when something already occupies the destination, so an
 # unwritable parent with the entry present is what reaches its failure branch.
@@ -405,7 +414,19 @@ status=$?
 chmod u+w "$FAKE_LN/.local/bin"
 assert_status "--install aborts when it cannot link" nonzero $status
 cat "$WORK/o" "$WORK/e" >"$WORK/both"
-assert_contains "--install names the link it could not make" "$WORK/both" '\[ERROR\].*add-skill'
+assert_contains "--install says it could not link" "$WORK/both" 'Failed to symlink'
+
+# An entry already at the destination, in a directory that cannot be written:
+# this reaches the removal rather than the link.
+FAKE_RM="$WORK/home-rm"
+mkdir -p "$FAKE_RM/.local/bin" && : >"$FAKE_RM/.local/bin/add-skill"
+chmod a-w "$FAKE_RM/.local/bin"
+HOME="$FAKE_RM" "$ADD_SKILL" --install </dev/null >"$WORK/o" 2>"$WORK/e"
+status=$?
+chmod u+w "$FAKE_RM/.local/bin"
+assert_status "--install aborts when it cannot remove what is there" nonzero $status
+cat "$WORK/o" "$WORK/e" >"$WORK/both"
+assert_contains "--install says it could not remove it" "$WORK/both" 'Failed to remove'
 
 FAKE_MK="$WORK/home-mk"
 mkdir -p "$FAKE_MK/.local" && chmod a-w "$FAKE_MK/.local"
@@ -414,7 +435,7 @@ status=$?
 chmod u+w "$FAKE_MK/.local"
 assert_status "--install aborts when it cannot create the directory" nonzero $status
 cat "$WORK/o" "$WORK/e" >"$WORK/both"
-assert_contains "--install names the directory it could not create" "$WORK/both" '\[ERROR\].*local/bin'
+assert_contains "--install says it could not create it" "$WORK/both" 'Failed to create'
 
 # Removing write permission leaves the directory enterable; removing execute
 # permission does not, and that reaches a different call.
@@ -425,7 +446,7 @@ status=$?
 chmod u+x "$FAKE_X/.local/bin"
 assert_status "--install aborts when it cannot enter the directory" nonzero $status
 cat "$WORK/o" "$WORK/e" >"$WORK/both"
-assert_contains "--install names the directory it could not enter" "$WORK/both" '\[ERROR\].*local/bin'
+assert_contains "--install says it could not enter it" "$WORK/both" 'Failed to enter'
 
 # The failure path must not read from stdin. A fifo this script holds open
 # delivers nothing and never signals end of file, so anything that reads it
