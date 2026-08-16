@@ -113,6 +113,25 @@ path_within() {
   return 1
 }
 
+# Emit every entry the source resolves through, one per line: the entry itself
+# with its parent resolved, then each symlink target, ending at a non-symlink.
+# readlink rather than cd, so a target that cannot be entered still resolves.
+source_chain() {
+  local path=$1 parent link depth=0
+  while [ "$depth" -lt 40 ]; do
+    parent="$(cd "$(dirname "$path")" 2>/dev/null && pwd -P)" || return 0
+    path="${parent%/}/$(basename "$path")"
+    printf '%s\n' "$path"
+    [ -L "$path" ] || return 0
+    link="$(readlink "$path")" || return 0
+    case "$link" in
+    /*) path=$link ;;
+    *) path="${parent%/}/$link" ;;
+    esac
+    depth=$((depth + 1))
+  done
+}
+
 # True when the first path, or an ancestor of it, is the same file as the
 # second. Text cannot settle this on its own: one directory can have two
 # spellings that no resolver unifies — on macOS /Users and
@@ -426,34 +445,27 @@ install_skill() {
   # about to be removed. The other direction — a destination inside the source,
   # which is what installing a single-skill repo into its own .claude/skills
   # does — is safe, because the removal only touches the destination itself.
-  # Compare against both the source's own entry and what that entry points at.
-  local source_parent source_entry source_target
-  source_parent="$(cd "$(dirname "$source_path")" 2>/dev/null && pwd -P)" || source_parent=""
-  source_entry=""
-  [ -n "$source_parent" ] && source_entry="${source_parent%/}/$(basename "$source_path")"
-  # realpath, not cd: cd follows the link and then needs to enter what it lands
-  # on, so a source entry pointing at an unenterable directory would resolve to
-  # nothing while source_entry names only the link, and the comparison would
-  # miss the relationship entirely. Resolving a path needs no such permission,
-  # and it follows a chain of any length.
-  source_target="$(realpath "$source_path" 2>/dev/null)" || source_target=""
-  if path_within "$source_entry" "$dest_entry" || path_within "$source_target" "$dest_entry"; then
-    print_error "Refusing to install $skill_name: $dest_path is or contains its own source $source_path"
-    return 1
-  fi
-  # Only when the destination is a real entry, which is the case the removal
-  # recurses into. A symlink there is unlinked, so nothing behind it is at risk
-  # — and asking by identity would follow it straight back to the source and
-  # refuse every ordinary reinstall.
-  # No test reaches this: constructing it needs two spellings of one directory
-  # that no resolver unifies, and a firmlink cannot be created on demand.
-  # path_under_identity itself is covered against the aliases macOS ships.
-  if [ ! -L "$dest_entry" ] && [ -e "$dest_entry" ] &&
-    { path_under_identity "$source_entry" "$dest_entry" ||
-      path_under_identity "$source_target" "$dest_entry"; }; then
-    print_error "Refusing to install $skill_name: $dest_path is another name for its own source $source_path"
-    return 1
-  fi
+  #
+  # Compare every entry the source resolves through, not just its ends: the
+  # destination can be a link in the middle, and unlinking it there leaves the
+  # source pointing at what this then creates — a cycle, reported as success.
+  local node
+  while IFS= read -r node; do
+    if path_within "$node" "$dest_entry"; then
+      print_error "Refusing to install $skill_name: $dest_path is or contains its own source $source_path"
+      return 1
+    fi
+    # Identity only when the destination is a real entry, which is the case the
+    # removal recurses into. A symlink there is unlinked, so nothing behind it
+    # is at risk — and -ef would follow it straight back to the source and
+    # refuse every ordinary reinstall. No test reaches this branch: it needs two
+    # spellings of one directory that no resolver unifies, and a firmlink cannot
+    # be created on demand. path_under_identity itself is covered directly.
+    if [ ! -L "$dest_entry" ] && [ -e "$dest_entry" ] && path_under_identity "$node" "$dest_entry"; then
+      print_error "Refusing to install $skill_name: $dest_path is another name for its own source $source_path"
+      return 1
+    fi
+  done < <(source_chain "$source_path")
 
   # Clear the destination. A symlink is unlinked, never recursed into: rm -rf
   # reaches through one only when the path carries a trailing slash, which the

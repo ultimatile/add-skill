@@ -373,6 +373,21 @@ run_at "$OWN/my-skill" "$OWN/my-skill/.claude/skills" "$WORK/o" "$WORK/e" "$OWN/
 cat "$WORK/o" "$WORK/e" >"$WORK/both"
 assert_absent "copy mode is not refused there either" "$WORK/both" 'is or contains its own source'
 
+# The destination can sit in the middle of the source's resolution chain, where
+# it is neither the entry nor what the entry finally reaches. Unlinking it there
+# and pointing it back at the source closes a cycle.
+CHAIN="$WORK/chain"
+mkdir -p "$CHAIN/repo/skills" "$CHAIN/dest" "$CHAIN/real/alpha"
+printf -- '---\nname: alpha\ndescription: smoke fixture\n---\n' >"$CHAIN/real/alpha/SKILL.md"
+ln -s "$CHAIN/real/alpha" "$CHAIN/dest/alpha"
+ln -s "$CHAIN/dest/alpha" "$CHAIN/repo/skills/alpha"
+run_at "$CHAIN" "$CHAIN/dest" "$WORK/o" "$WORK/e" "$CHAIN/repo" --symlink --skill alpha
+assert_status "a destination inside the resolution chain aborts" nonzero $?
+assert_true "the middle link still points where it did" \
+  test "$(readlink "$CHAIN/dest/alpha")" = "$CHAIN/real/alpha"
+cat "$WORK/o" "$WORK/e" >"$WORK/both"
+assert_contains "the guard is what stopped the chain case" "$WORK/both" 'is or contains its own source'
+
 # cd follows a symlink and then has to enter what it lands on, so a source entry
 # pointing at an unenterable directory used to resolve to nothing and slip past
 # the guard: the destination was removed and replaced with a link cycle, exit 0.
