@@ -327,7 +327,7 @@ install_skill() {
       forced=" (forced)"
     fi
 
-    # ln writes its own reason to stderr, so this only names the skill.
+    # ln writes its own reason to stderr, so this does not restate it.
     if ! ln "$ln_flags" "$source_path" "$dest_path"; then
       print_error "Failed to symlink $skill_name to $dest_path"
       return 1
