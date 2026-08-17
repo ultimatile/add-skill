@@ -23,14 +23,14 @@ The source repository must have either a `.claude-plugin/marketplace.json` (pref
 # List available skills
 add-skill ~/my-skills-repo --list
 
-# Install all skills (copy mode, to ./.claude/skills)
+# Install all skills (to ./.claude/skills)
 add-skill ~/my-skills-repo
 
 # Install specific skills
 add-skill ~/my-skills-repo --skill my-skill --skill another-skill
 
-# Install with symlinks (recommended — auto-updates on git pull)
-add-skill ~/my-skills-repo --symlink --all
+# Install all skills, allowing replacement of a real file or directory
+add-skill ~/my-skills-repo --force --all
 ```
 
 ### Target Agents
@@ -48,30 +48,33 @@ By default, skills install to `./.claude/skills` (Claude Code). Use flags to tar
 
 ```bash
 # Claude Code (global)
-add-skill ~/my-skills-repo --symlink --global --all
+add-skill ~/my-skills-repo --global --all
 
 # Codex (global)
-add-skill ~/my-skills-repo --symlink --codex --all
+add-skill ~/my-skills-repo --codex --all
 
 # Codex (project)
-add-skill ~/my-skills-repo --symlink --codex-repo --all
+add-skill ~/my-skills-repo --codex-repo --all
 
 # Kiro (global)
-add-skill ~/my-skills-repo --symlink --kiro --all
+add-skill ~/my-skills-repo --kiro --all
 
 # Kiro (project)
-add-skill ~/my-skills-repo --symlink --kiro-repo --all
+add-skill ~/my-skills-repo --kiro-repo --all
 ```
 
 Codex searches project-level locations before global ones, but same-name skills are not merged or overridden — both can show up in the skill selector. For Kiro, project-level skills override global skills with the same name.
 
-### Symlink vs Copy
+### What happens at the destination
 
-- **Copy** (default): Self-contained. Requires reinstall after updating the source repo.
-- **Symlink** (`--symlink`): References the source repo directly. Updates automatically on `git pull`.
-- **Symlink force** (`--symlink-force`): Same as `--symlink`, but also replaces a real file or directory at the destination.
+Each skill is installed as a symlink pointing at the source repository, so an edit there is live in every project that installed from it, with no reinstall in between.
 
-A symlink left by an earlier install is replaced in every mode, and is unlinked rather than followed, so whatever it points at is untouched. A real file or directory at the destination is replaced by copy mode and by `--symlink-force`; plain `--symlink` refuses it and says so. An install whose destination is, or contains, its own source is refused. A destination *inside* the source is not — a repository that is itself a skill can symlink into the `.claude/skills` within it. Use `--symlink` for that: copy mode would ask `cp` to copy a tree into its own subtree, which GNU `cp` declines outright and BSD `cp` completes with the nested copy truncated.
+What `add-skill` does with whatever already sits at a skill's destination:
+
+- A **symlink** is replaced. It is unlinked rather than followed, so whatever it pointed at is untouched.
+- A **real file or directory** is refused, and the message says so. Pass `--force` to replace it. Since this version only ever creates symlinks, a real entry is not one it made — for example, your own file, or an install left by an older version that copied.
+
+An install whose destination is, or contains, its own source is refused. A destination *inside* the source is not — a repository that is itself a skill can install into the `.claude/skills` within it.
 
 Nothing prompts for confirmation — if a skill cannot be installed, `add-skill` reports the reason and exits non-zero without installing the rest.
 
@@ -88,4 +91,4 @@ SKILLS_INSTALL_PATH=/custom/path add-skill ~/my-skills-repo
 ./tests/smoke.sh
 ```
 
-Builds a throwaway skills repository and installs from it, covering both the successful modes and the failure path. Exits non-zero if any assertion fails. Set `ADD_SKILL` to test a different copy of the script.
+Builds a throwaway skills repository and installs from it, covering the successful path, the destination guard, and the failure path. Exits non-zero if any assertion fails. Set `ADD_SKILL` to test a different copy of the script.
