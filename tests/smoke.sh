@@ -244,14 +244,18 @@ assert_true "re-running leaves a symlink behind" test -L "$DEST/alpha"
 # --force permits the replacement of real content; it does not perform one. Where
 # a link or nothing was in the way, nothing gets replaced, so the outcome, the
 # per-skill line and the closing summary all read as they would without it.
-run "$WORK/o" "$WORK/e" --force
+#
+# Asserted under --verbose, because '(forced)' is a per-skill marker and the
+# default level prints no per-skill line for it to be absent from. Left at the
+# default level these would pass against a string that cannot appear either way.
+run "$WORK/o" "$WORK/e" --force --verbose
 assert_status "--force over a symlink exits 0" zero $?
 assert_true "--force over a symlink leaves a symlink behind" test -L "$DEST/alpha"
 assert_absent "--force over a symlink is not marked forced" "$WORK/o" '(forced)'
 assert_absent "--force over a symlink claims no replacement" "$WORK/o" 'Replaced a real file'
 
 reset_dest
-run "$WORK/o" "$WORK/e" --force
+run "$WORK/o" "$WORK/e" --force --verbose
 assert_status "--force onto an absent destination exits 0" zero $?
 assert_true "--force onto an absent destination links" test -L "$DEST/alpha"
 assert_absent "--force onto an absent destination is not marked forced" "$WORK/o" '(forced)'
@@ -294,11 +298,22 @@ assert_true "the destination became a symlink" test -L "$DEST/alpha"
 # what this asserts, and a combined grep would pass either way.
 assert_contains "the deletion is announced before it happens" "$WORK/e" 'Deleting the real file or directory'
 assert_absent "the deletion is not announced on stdout" "$WORK/o" 'Deleting the real file or directory'
+# The replacement is reported per skill at both levels, in different shapes. At
+# the default level it is a name on the replaced-list; bravo was absent rather
+# than replaced, so it must not appear there. A grep for the whole line cannot
+# tell a per-skill marker from one set once per run, which is what the second
+# assertion is for.
+assert_contains "the replaced-list names the skill that was replaced" "$WORK/o" 'Replaced a real file or directory for:.*alpha'
+assert_false "and does not name the one that was not" \
+  grep -q -- 'Replaced a real file or directory for:.*bravo' "$WORK/o"
+
+reset_dest
+mkdir -p "$DEST/alpha" && echo mine >"$DEST/alpha/mine.txt"
+run "$WORK/o" "$WORK/e" --force --verbose
+assert_status "--force replaces the real directory under --verbose too" zero $?
 assert_contains "the replacement is marked forced" "$WORK/o" 'Symlinked alpha (forced)'
-# bravo was absent, not replaced, so the marker must be per-skill rather than
-# set once for the run. A whole-output grep for '(forced)' cannot tell those apart.
 assert_absent "the skill that was not replaced is unmarked" "$WORK/o" 'Symlinked bravo (forced)'
-assert_contains "and the summary reports it" "$WORK/o" 'Replaced a real file'
+assert_contains "and the closing summary reports it" "$WORK/o" 'Replaced a real file or directory at the destination'
 
 # A real regular file takes the same branch — the test is -e, which does not
 # distinguish the two — and rm -rf removes it just as well.
@@ -466,6 +481,13 @@ run_at "$DISCOVER" "$DISCOVER/dest" "$WORK/o" "$WORK/e" "$DISCOVER/repo"
 assert_status "a repository with an oddly named skill installs" zero $?
 assert_true "the odd name is installed as it is" test -L "$DISCOVER/dest/$quirk"
 assert_true "and its neighbour is too" test -L "$DISCOVER/dest/delta"
+# The summary names every installed skill on one line, so a name holding a
+# newline has to reach it escaped. Raw, it would break the line in two and blur
+# where one name ends and the next begins.
+assert_true "the summary stays on one line" test "$(grep -c 'Symlinked 2 skills:' "$WORK/o")" -eq 1
+assert_true "and the whole summary is a single line" \
+  test "$(sed -n '/Symlinked 2 skills:/,$p' "$WORK/o" | wc -l)" -eq 1
+assert_contains "with the newline shown rather than emitted" "$WORK/o" "gamma"'\\'"n"
 
 # Command substitution strips every trailing newline, so a name ending in one
 # used to resolve to the sibling of that name and clear that instead.
@@ -604,6 +626,23 @@ assert_true "the script still has content" test -s "$FAKE/.local/bin/add-skill"
 capture_both
 assert_contains "it still says where PATH stands" "$WORK/both" 'PATH'
 
+# --install has its own informational output, so the quiet level has to cover it
+# too — in both PATH branches, since the one that reports trouble routes its
+# whole message to stderr while the one that reports success is a print_info.
+FAKE_Q="$WORK/home-quiet"
+mkdir -p "$FAKE_Q/.local/bin"
+HOME="$FAKE_Q" PATH="$FAKE_Q/.local/bin:/usr/bin:/bin" "$ADD_SKILL" --install --quiet </dev/null >"$WORK/o" 2>"$WORK/e"
+assert_status "--install --quiet exits 0 with the directory on PATH" zero $?
+assert_true "and writes nothing to stdout" test ! -s "$WORK/o"
+assert_true "the symlink was still made" test -L "$FAKE_Q/.local/bin/add-skill"
+
+FAKE_Q2="$WORK/home-quiet-nopath"
+mkdir -p "$FAKE_Q2/.local/bin"
+HOME="$FAKE_Q2" PATH="/usr/bin:/bin" "$ADD_SKILL" --install --quiet </dev/null >"$WORK/o" 2>"$WORK/e"
+assert_status "--install --quiet exits 0 with it off PATH" zero $?
+assert_true "and still writes nothing to stdout" test ! -s "$WORK/o"
+assert_contains "the PATH warning goes to stderr" "$WORK/e" 'is not in your PATH'
+
 # A multi-line diagnostic has to arrive whole on one stream. The PATH warning is
 # the longest one the script has: a warning line, a lead-in, and a per-shell
 # configuration block. Routing only the warning would leave the block behind.
@@ -657,6 +696,98 @@ chmod u+x "$FAKE_X/.local/bin"
 assert_status "--install aborts when it cannot enter the directory" nonzero $status
 capture_both
 assert_contains "--install says it could not enter it" "$WORK/both" 'Failed to enter'
+
+echo "[the three verbosity levels]"
+reset_dest
+run "$WORK/o" "$WORK/e"
+assert_status "the default level exits 0" zero $?
+# Four rather than three, because a replaced-list line joins the other two when
+# something was replaced, and nothing here was.
+assert_true "the default level prints at most four lines" test "$(wc -l <"$WORK/o")" -le 4
+assert_contains "it gives the count and both names" "$WORK/o" 'Symlinked 2 skills:.*alpha.*bravo'
+assert_absent "and no per-skill line" "$WORK/o" 'Creating symlink for'
+
+reset_dest
+run "$WORK/o" "$WORK/e" --verbose
+assert_status "--verbose exits 0" zero $?
+assert_contains "--verbose announces each skill" "$WORK/o" 'Creating symlink for alpha\.\.\.'
+assert_contains "and reports each one linked" "$WORK/o" 'Symlinked alpha:'
+assert_absent "and prints no summary line" "$WORK/o" 'Symlinked 2 skills:'
+
+reset_dest
+run "$WORK/o" "$WORK/e" -v
+assert_status "-v is --verbose" zero $?
+assert_contains "-v announces each skill too" "$WORK/o" 'Creating symlink for alpha\.\.\.'
+
+# Byte-empty rather than a line count: a bare echo left ungated by the verbosity
+# rework would put a newline here that a line count could still call zero.
+reset_dest
+run "$WORK/o" "$WORK/e" --quiet
+assert_status "--quiet exits 0" zero $?
+assert_true "--quiet writes nothing to stdout" test ! -s "$WORK/o"
+assert_true "--quiet still installs" test -L "$DEST/alpha"
+assert_true "both of them" test -L "$DEST/bravo"
+
+reset_dest
+run "$WORK/o" "$WORK/e" -q
+assert_status "-q is --quiet" zero $?
+assert_true "-q writes nothing to stdout either" test ! -s "$WORK/o"
+
+# Quiet suppresses information, not diagnosis.
+reset_dest
+mkdir -p "$DEST/alpha" && echo mine >"$DEST/alpha/mine.txt"
+run "$WORK/o" "$WORK/e" --quiet
+assert_status "--quiet over a refused destination still aborts" nonzero $?
+assert_true "--quiet still writes nothing to stdout" test ! -s "$WORK/o"
+assert_contains "and the reason is still on stderr" "$WORK/e" '\[ERROR\]'
+rm -rf "${DEST:?}/alpha"
+
+# The banner the two boxes used to draw is gone at every level, not gated.
+for level in "" --verbose --quiet; do
+  reset_dest
+  run "$WORK/o" "$WORK/e" $level
+  assert_absent "no banner at the ${level:-default} level" "$WORK/o" 'Skills Installation'
+done
+
+echo "[--version moved to -V]"
+"$ADD_SKILL" -V </dev/null >"$WORK/o" 2>"$WORK/e"
+assert_status "-V exits 0" zero $?
+assert_contains "-V prints the version" "$WORK/o" '^add-skill [0-9]'
+"$ADD_SKILL" --version </dev/null >"$WORK/o" 2>"$WORK/e"
+assert_contains "--version still does too" "$WORK/o" '^add-skill [0-9]'
+# -v is verbose now, so on its own it reaches the missing-argument path rather
+# than printing a version.
+(cd "$WORK/proj" && "$ADD_SKILL" -v </dev/null >"$WORK/o" 2>"$WORK/e")
+assert_status "-v alone aborts" nonzero $?
+assert_absent "-v no longer prints the version" "$WORK/o" '^add-skill [0-9]'
+
+echo "[--list keeps its entries at the quiet level]"
+run "$WORK/o" "$WORK/e" --list --quiet
+assert_status "--list --quiet exits 0" zero $?
+assert_contains "the entries survive" "$WORK/o" '• alpha'
+assert_contains "both of them" "$WORK/o" '• bravo'
+assert_absent "the header does not" "$WORK/o" 'Available skills in'
+# On the blanks themselves rather than a line count, which would also move if
+# the per-entry output ever changed.
+assert_false "and neither do the blanks around them" grep -q '^$' "$WORK/o"
+
+echo "[the summary never fires where nothing was installed]"
+for flag in --help -V --list; do
+  run "$WORK/o" "$WORK/e" "$flag"
+  assert_absent "$flag prints no install summary" "$WORK/o" 'Symlinked . skills:'
+done
+
+# The EXIT trap is what reports a run that aborts partway: install_skill is a
+# bare command, so set -e ends the script at the failing call and anything
+# placed after the loop never runs. alpha links, then a name the source does not
+# have fails — the summary must still name what landed, and the status must
+# still be the failure's.
+echo "[an aborted run still reports what it installed]"
+reset_dest
+run "$WORK/o" "$WORK/e" --skill alpha --skill nosuch
+assert_status "the aborted run exits non-zero" nonzero $?
+assert_true "alpha did land" test -L "$DEST/alpha"
+assert_contains "and the summary says so" "$WORK/o" 'Symlinked 1 skills: alpha'
 
 # A skill name is attacker-controlled as far as this script is concerned: it is
 # whatever directory the source repository happens to hold. echo -e would turn a

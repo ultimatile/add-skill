@@ -76,7 +76,35 @@ What `add-skill` does with whatever already sits at a skill's destination:
 
 An install whose destination is, or contains, its own source is refused. A destination *inside* the source is not — a repository that is itself a skill can install into the `.claude/skills` within it.
 
-Nothing prompts for confirmation — if a skill cannot be installed, `add-skill` reports the reason and exits non-zero without installing the rest.
+Nothing prompts for confirmation — if a skill cannot be installed, `add-skill` reports the reason on stderr and exits non-zero without installing the rest.
+
+### How much it prints
+
+A successful install reports itself on one line, naming the skills it linked:
+
+```bash
+$ add-skill ~/my-skills-repo
+[INFO] Source: /home/you/my-skills-repo/skills
+[INFO] Destination: ./.claude/skills
+[INFO] Symlinked 3 skills: alpha bravo charlie
+```
+
+Two flags move off that default:
+
+| Flag | Effect |
+|------|--------|
+| `--quiet`, `-q` | Print nothing on success. Warnings and errors still appear. |
+| `--verbose`, `-v` | Print a line per skill as it is linked, plus a closing block. |
+
+Warnings and errors go to stderr at every level, so `--quiet` silences a run that works without hiding one that does not:
+
+```bash
+add-skill ~/my-skills-repo --quiet
+```
+
+Redirecting stdout is a separate lever, not a substitute for either half. `>/dev/null` drops the summary whether or not `--quiet` was passed, and it never drops the errors.
+
+`--list` is not progress output, so its entries survive `--quiet` while the header and blank lines around them do not — which leaves a listing you can read straight into another command.
 
 ### Environment Variables
 
