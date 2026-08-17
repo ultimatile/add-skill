@@ -210,58 +210,87 @@ assert_false "a destination that does not exist holds nothing" \
 
 echo "[install succeeds]"
 reset_dest
-run "$WORK/o" "$WORK/e" --symlink
-assert_status "symlink install exits 0" zero $?
+run "$WORK/o" "$WORK/e"
+assert_status "install exits 0" zero $?
 assert_true "alpha is a symlink" test -L "$DEST/alpha"
 assert_true "bravo is a symlink" test -L "$DEST/bravo"
 
-run "$WORK/o" "$WORK/e" --symlink
+run "$WORK/o" "$WORK/e"
 assert_status "re-running over the install exits 0" zero $?
+assert_true "re-running leaves a symlink behind" test -L "$DEST/alpha"
 
-run "$WORK/o" "$WORK/e" --symlink-force
-assert_status "symlink-force exits 0" zero $?
-assert_true "symlink-force leaves a symlink behind" test -L "$DEST/alpha"
-assert_contains "symlink-force marks the per-skill line forced" "$WORK/o" '(forced)'
-assert_contains "symlink-force names replacement in the summary" "$WORK/o" 'Replaces a real file'
+# --force names the replacement of real content, so where a link or nothing was
+# in the way it changes neither the outcome nor the per-skill line.
+run "$WORK/o" "$WORK/e" --force
+assert_status "--force over a symlink exits 0" zero $?
+assert_true "--force over a symlink leaves a symlink behind" test -L "$DEST/alpha"
+assert_absent "--force over a symlink is not marked forced" "$WORK/o" '(forced)'
+assert_contains "--force names replacement in the summary" "$WORK/o" 'Replaces a real file'
 
 reset_dest
-run "$WORK/o" "$WORK/e"
-assert_status "copy install exits 0" zero $?
-assert_true "copy install produces a directory" test -d "$DEST/alpha"
-assert_true "the copied skill is not a symlink" test ! -L "$DEST/alpha"
+run "$WORK/o" "$WORK/e" --force
+assert_status "--force onto an absent destination exits 0" zero $?
+assert_true "--force onto an absent destination links" test -L "$DEST/alpha"
+assert_absent "--force onto an absent destination is not marked forced" "$WORK/o" '(forced)'
 
-# Copy mode replaces a real directory, so a file left inside a previous copy
-# must not survive the next one.
-echo stale >"$DEST/alpha/stale.txt"
+# A broken link is -L true where -e is false, so the unlink branch has to be
+# tested first for this to be replaced rather than read as an absent entry.
+reset_dest
+ln -s "$WORK/no-such-target" "$DEST/alpha"
 run "$WORK/o" "$WORK/e"
-assert_status "re-running the copy install exits 0" zero $?
-assert_true "the copy install replaces what was there" test ! -e "$DEST/alpha/stale.txt"
+assert_status "a broken link at the destination exits 0" zero $?
+assert_true "the broken link now points at the source" \
+  test "$(readlink "$DEST/alpha")" = "$SRC/skills/alpha"
 
-# A real entry at the destination is content this tool did not put there.
+reset_dest
+ln -s "$WORK/no-such-target" "$DEST/alpha"
+run "$WORK/o" "$WORK/e" --force
+assert_status "--force over a broken link exits 0" zero $?
+assert_true "--force replaced the broken link" \
+  test "$(readlink "$DEST/alpha")" = "$SRC/skills/alpha"
+
+# A real entry at the destination is content this tool did not put there: it
+# only ever creates symlinks.
 echo "[real content at the destination]"
 reset_dest
 mkdir -p "$DEST/alpha" && echo mine >"$DEST/alpha/mine.txt"
-run "$WORK/o" "$WORK/e" --symlink
-assert_status "plain --symlink refuses a real directory" nonzero $?
+run "$WORK/o" "$WORK/e"
+assert_status "a real directory is refused" nonzero $?
 assert_true "the real directory is untouched" test -f "$DEST/alpha/mine.txt"
+# ln descends into a real directory and exits 0, leaving the link inside it, so
+# the refusal has to be checked for what it did not create. A status check alone
+# would pass with the link sitting one level down.
+assert_true "no link was created inside the refused directory" test ! -e "$DEST/alpha/alpha"
 cat "$WORK/o" "$WORK/e" >"$WORK/both"
-assert_contains "it points at --symlink-force" "$WORK/both" '\[ERROR\].*symlink-force'
+assert_contains "it points at --force" "$WORK/both" '\[ERROR\].*--force'
 
-run "$WORK/o" "$WORK/e" --symlink-force
-assert_status "--symlink-force replaces it" zero $?
+run "$WORK/o" "$WORK/e" --force
+assert_status "--force replaces the real directory" zero $?
 assert_true "the destination became a symlink" test -L "$DEST/alpha"
+assert_contains "the replacement is marked forced" "$WORK/o" '(forced)'
 
-# An unwritable destination makes the link or the copy fail while nothing
-# occupies the target, so the failure is never "the target already exists".
+# A real regular file takes the same branch — the test is -e, which does not
+# distinguish the two — and rm -rf removes it just as well.
+reset_dest
+echo mine >"$DEST/alpha"
+run "$WORK/o" "$WORK/e"
+assert_status "a real file is refused" nonzero $?
+assert_true "the real file is untouched" test -f "$DEST/alpha"
+assert_true "the real file is still not a symlink" test ! -L "$DEST/alpha"
+
+run "$WORK/o" "$WORK/e" --force
+assert_status "--force replaces the real file" zero $?
+assert_true "the file's destination became a symlink" test -L "$DEST/alpha"
+
+# An unwritable destination makes the link fail while nothing occupies the
+# target, so the failure is never "the target already exists".
 echo "[install fails]"
-# Each spec is "label|flag|tool": the flag to pass (empty for the default copy
-# mode) and the command whose own stderr must carry the reason. Kept as split
+# Each spec is "label|flag": the flag to pass, empty for the default. ln is the
+# command whose own stderr must carry the reason either way. Kept as split
 # strings because bash 3.2 has no associative arrays.
-for spec in "--symlink|--symlink|ln" "--symlink-force|--symlink-force|ln" "copy mode||cp"; do
+for spec in "the default|" "--force|--force"; do
   label="${spec%%|*}"
-  rest="${spec#*|}"
-  flag="${rest%%|*}"
-  tool="${rest#*|}"
+  flag="${spec#*|}"
 
   reset_dest
   chmod a-w "$DEST"
@@ -276,7 +305,7 @@ for spec in "--symlink|--symlink|ln" "--symlink-force|--symlink-force|ln" "copy 
   assert_status "$label aborts with non-zero status" nonzero $status
   cat "$WORK/o" "$WORK/e" >"$WORK/both"
   assert_contains "$label names the skill it could not install" "$WORK/both" '\[ERROR\].*alpha'
-  assert_contains "$label lets $tool report the reason on stderr" "$WORK/e" "^$tool:"
+  assert_contains "$label lets ln report the reason on stderr" "$WORK/e" '^ln:'
   assert_absent "$label asks no question" "$WORK/both" '(y/N)'
 done
 
@@ -284,7 +313,7 @@ done
 # Ask for a name the source does not have, followed by one it does.
 echo "[a failure stops the run]"
 reset_dest
-run "$WORK/o" "$WORK/e" --symlink --skill nosuch --skill alpha
+run "$WORK/o" "$WORK/e" --skill nosuch --skill alpha
 assert_status "an unknown skill aborts with non-zero status" nonzero $?
 assert_true "the skill queued after the failure is not installed" test ! -e "$DEST/alpha"
 
@@ -295,7 +324,7 @@ echo "[refuses to install onto its own source]"
 SELF="$WORK/self"
 mkdir -p "$SELF/my-skill"
 printf -- '---\nname: my-skill\ndescription: smoke fixture\n---\n' >"$SELF/my-skill/SKILL.md"
-run_at "$SELF" "$SELF" "$WORK/o" "$WORK/e" "$SELF/my-skill" --symlink
+run_at "$SELF" "$SELF" "$WORK/o" "$WORK/e" "$SELF/my-skill"
 assert_status "installing onto its own source aborts" nonzero $?
 assert_true "the source file survives" test -f "$SELF/my-skill/SKILL.md"
 assert_true "the source is still a directory" test ! -L "$SELF/my-skill"
@@ -305,21 +334,14 @@ assert_contains "it says what it refused" "$WORK/both" '\[ERROR\].*own source'
 # The destination can also be the source's own entry when that entry is itself a
 # symlink. Resolving the source through it would compare the target instead and
 # let the removal delete the entry.
-for mode in --symlink ""; do
-  label=${mode:-copy mode}
-  LINKED="$WORK/linked-$$-${mode:-copy}"
-  mkdir -p "$LINKED/repo/skills" "$LINKED/elsewhere/alpha"
-  printf -- '---\nname: alpha\ndescription: smoke fixture\n---\n' >"$LINKED/elsewhere/alpha/SKILL.md"
-  ln -s "$LINKED/elsewhere/alpha" "$LINKED/repo/skills/alpha"
-  if [ -n "$mode" ]; then
-    run_at "$LINKED" "$LINKED/repo/skills" "$WORK/o" "$WORK/e" "$LINKED/repo" "$mode"
-  else
-    run_at "$LINKED" "$LINKED/repo/skills" "$WORK/o" "$WORK/e" "$LINKED/repo"
-  fi
-  assert_status "$label onto a symlinked source entry aborts" nonzero $?
-  assert_true "$label leaves the source entry pointing where it did" \
-    test "$(readlink "$LINKED/repo/skills/alpha")" = "$LINKED/elsewhere/alpha"
-done
+LINKED="$WORK/linked-$$"
+mkdir -p "$LINKED/repo/skills" "$LINKED/elsewhere/alpha"
+printf -- '---\nname: alpha\ndescription: smoke fixture\n---\n' >"$LINKED/elsewhere/alpha/SKILL.md"
+ln -s "$LINKED/elsewhere/alpha" "$LINKED/repo/skills/alpha"
+run_at "$LINKED" "$LINKED/repo/skills" "$WORK/o" "$WORK/e" "$LINKED/repo"
+assert_status "installing onto a symlinked source entry aborts" nonzero $?
+assert_true "it leaves the source entry pointing where it did" \
+  test "$(readlink "$LINKED/repo/skills/alpha")" = "$LINKED/elsewhere/alpha"
 
 # The other half of the guard: the destination is not the source entry but what
 # that entry points at, so removing it would empty the source from underneath.
@@ -327,12 +349,16 @@ POINTED="$WORK/pointed"
 mkdir -p "$POINTED/repo/skills" "$POINTED/dest/alpha"
 printf -- '---\nname: alpha\ndescription: smoke fixture\n---\n' >"$POINTED/dest/alpha/SKILL.md"
 ln -s "$POINTED/dest/alpha" "$POINTED/repo/skills/alpha"
-# --symlink-force, not --symlink: the destination is a real directory, so plain
-# --symlink refuses it before the guard is consulted and the assertions would
-# hold with the guard deleted.
-run_at "$POINTED" "$POINTED/dest" "$WORK/o" "$WORK/e" "$POINTED/repo" --symlink-force
+# --force, not the default: the destination is a real directory, so the default
+# would refuse it on that ground alone and the assertions would hold with the
+# guard deleted. Both refusals exit non-zero, so the message is what tells them
+# apart — a status check on its own cannot.
+run_at "$POINTED" "$POINTED/dest" "$WORK/o" "$WORK/e" "$POINTED/repo" --force
 assert_status "installing onto what the source entry points at aborts" nonzero $?
 assert_true "the pointed-at content survives" test -f "$POINTED/dest/alpha/SKILL.md"
+cat "$WORK/o" "$WORK/e" >"$WORK/both"
+assert_contains "the guard is what refused it" "$WORK/both" '\[ERROR\].*own source'
+assert_absent "not the --force gate" "$WORK/both" 'pass --force to replace it'
 
 # --skill takes the name as given, so it can carry path components. The
 # destination's parent then absorbs them and the comparison has to account for
@@ -340,7 +366,7 @@ assert_true "the pointed-at content survives" test -f "$POINTED/dest/alpha/SKILL
 NESTED="$WORK/nested"
 mkdir -p "$NESTED/repo/skills/sub/alpha"
 printf -- '---\nname: alpha\ndescription: smoke fixture\n---\n' >"$NESTED/repo/skills/sub/alpha/SKILL.md"
-run_at "$NESTED" "$NESTED/repo/skills" "$WORK/o" "$WORK/e" "$NESTED/repo" --symlink-force --skill sub/alpha
+run_at "$NESTED" "$NESTED/repo/skills" "$WORK/o" "$WORK/e" "$NESTED/repo" --force --skill sub/alpha
 assert_status "a name with a path component is refused" nonzero $?
 assert_true "the nested source survives" test -f "$NESTED/repo/skills/sub/alpha/SKILL.md"
 cat "$WORK/o" "$WORK/e" >"$WORK/both"
@@ -352,7 +378,7 @@ TRAVERSE="$WORK/traverse"
 mkdir -p "$TRAVERSE/repo/skills/alpha" "$TRAVERSE/repo/other" "$TRAVERSE/proj/dest" "$TRAVERSE/proj/other"
 printf -- '---\nname: other\ndescription: smoke fixture\n---\n' >"$TRAVERSE/repo/other/SKILL.md"
 echo mine >"$TRAVERSE/proj/other/keep.txt"
-run_at "$TRAVERSE/proj" "$TRAVERSE/proj/dest" "$WORK/o" "$WORK/e" "$TRAVERSE/repo" --symlink-force --skill ../other
+run_at "$TRAVERSE/proj" "$TRAVERSE/proj/dest" "$WORK/o" "$WORK/e" "$TRAVERSE/repo" --force --skill ../other
 assert_status "a name climbing out of the skills directory is refused" nonzero $?
 assert_true "nothing outside the install path is touched" test -f "$TRAVERSE/proj/other/keep.txt"
 assert_true "and it is still a directory" test ! -L "$TRAVERSE/proj/other"
@@ -363,7 +389,7 @@ ANCESTOR="$WORK/ancestor"
 mkdir -p "$ANCESTOR/inst/alpha/skills/alpha"
 printf -- '---\nname: alpha\ndescription: smoke fixture\n---\n' >"$ANCESTOR/inst/alpha/skills/alpha/SKILL.md"
 echo keep >"$ANCESTOR/inst/alpha/README.md"
-run_at "$ANCESTOR" "$ANCESTOR/inst" "$WORK/o" "$WORK/e" "$ANCESTOR/inst/alpha" --symlink-force
+run_at "$ANCESTOR" "$ANCESTOR/inst" "$WORK/o" "$WORK/e" "$ANCESTOR/inst/alpha" --force
 assert_status "a destination containing the source aborts" nonzero $?
 assert_true "the surrounding repository survives" test -f "$ANCESTOR/inst/alpha/README.md"
 cat "$WORK/o" "$WORK/e" >"$WORK/both"
@@ -375,9 +401,9 @@ TRAILING="$WORK/trailing"
 mkdir -p "$TRAILING/repo/skills/alpha" "$TRAILING/dest"
 printf -- '---\nname: alpha\ndescription: smoke fixture\n---\n' >"$TRAILING/repo/skills/alpha/SKILL.md"
 echo payload >"$TRAILING/repo/skills/alpha/payload.txt"
-run_at "$TRAILING" "$TRAILING/dest" "$WORK/o" "$WORK/e" "$TRAILING/repo" --symlink --skill alpha
+run_at "$TRAILING" "$TRAILING/dest" "$WORK/o" "$WORK/e" "$TRAILING/repo" --skill alpha
 assert_status "the first install exits 0" zero $?
-run_at "$TRAILING" "$TRAILING/dest" "$WORK/o" "$WORK/e" "$TRAILING/repo" --symlink --skill alpha/
+run_at "$TRAILING" "$TRAILING/dest" "$WORK/o" "$WORK/e" "$TRAILING/repo" --skill alpha/
 assert_status "a trailing-slash name still installs" zero $?
 assert_true "a trailing slash does not reach through the link" test -f "$TRAILING/repo/skills/alpha/payload.txt"
 assert_true "the destination is still the expected link" \
@@ -389,15 +415,11 @@ assert_true "the destination is still the expected link" \
 OWN="$WORK/own"
 mkdir -p "$OWN/my-skill"
 printf -- '---\nname: my-skill\ndescription: smoke fixture\n---\n' >"$OWN/my-skill/SKILL.md"
-run_at "$OWN/my-skill" "$OWN/my-skill/.claude/skills" "$WORK/o" "$WORK/e" "$OWN/my-skill" --symlink
+run_at "$OWN/my-skill" "$OWN/my-skill/.claude/skills" "$WORK/o" "$WORK/e" "$OWN/my-skill"
 assert_status "a single-skill repo installs inside its own tree" zero $?
 assert_true "that install is a symlink" test -L "$OWN/my-skill/.claude/skills/my-skill"
-rm -rf "$OWN/my-skill/.claude"
-# Only that the guard allows it: whether cp itself copies a tree into its own
-# subtree differs between BSD and GNU cp, and that predates this change.
-run_at "$OWN/my-skill" "$OWN/my-skill/.claude/skills" "$WORK/o" "$WORK/e" "$OWN/my-skill"
 cat "$WORK/o" "$WORK/e" >"$WORK/both"
-assert_absent "copy mode is not refused there either" "$WORK/both" 'is or contains its own source'
+assert_absent "the guard did not refuse it" "$WORK/both" 'is or contains its own source'
 
 # A filename may contain a newline. Any line-delimited list of the chain would
 # split such a name into unrelated entries and lose the relationship.
@@ -406,7 +428,7 @@ mkdir -p "$NEWLINE/repo/skills"
 odd="$(printf 'alpha\nbeta')"
 mkdir -p "$NEWLINE/repo/skills/$odd"
 printf -- '---\nname: alpha\ndescription: smoke fixture\n---\n' >"$NEWLINE/repo/skills/$odd/SKILL.md"
-run_at "$NEWLINE" "$NEWLINE/repo/skills" "$WORK/o" "$WORK/e" "$NEWLINE/repo" --symlink-force --skill "$odd"
+run_at "$NEWLINE" "$NEWLINE/repo/skills" "$WORK/o" "$WORK/e" "$NEWLINE/repo" --force --skill "$odd"
 assert_status "a newline in the name does not split the comparison" nonzero $?
 assert_true "the oddly named source survives" test -f "$NEWLINE/repo/skills/$odd/SKILL.md"
 
@@ -418,7 +440,7 @@ quirk=$'gamma\n'
 mkdir -p "$DISCOVER/repo/skills/$quirk" "$DISCOVER/repo/skills/delta" "$DISCOVER/dest"
 printf -- '---\nname: gamma\ndescription: smoke fixture\n---\n' >"$DISCOVER/repo/skills/$quirk/SKILL.md"
 printf -- '---\nname: delta\ndescription: smoke fixture\n---\n' >"$DISCOVER/repo/skills/delta/SKILL.md"
-run_at "$DISCOVER" "$DISCOVER/dest" "$WORK/o" "$WORK/e" "$DISCOVER/repo" --symlink
+run_at "$DISCOVER" "$DISCOVER/dest" "$WORK/o" "$WORK/e" "$DISCOVER/repo"
 assert_status "a repository with an oddly named skill installs" zero $?
 assert_true "the odd name is installed as it is" test -L "$DISCOVER/dest/$quirk"
 assert_true "and its neighbour is too" test -L "$DISCOVER/dest/delta"
@@ -431,7 +453,7 @@ mkdir -p "$TRAILNL/repo/skills/alpha" "$TRAILNL/repo/skills/$odd" "$TRAILNL/dest
 printf -- '---\nname: alpha\ndescription: smoke fixture\n---\n' >"$TRAILNL/repo/skills/alpha/SKILL.md"
 printf -- '---\nname: alpha\ndescription: smoke fixture\n---\n' >"$TRAILNL/repo/skills/$odd/SKILL.md"
 echo marker >"$TRAILNL/dest/alpha/keep.txt"
-run_at "$TRAILNL" "$TRAILNL/dest" "$WORK/o" "$WORK/e" "$TRAILNL/repo" --symlink-force --skill "$odd"
+run_at "$TRAILNL" "$TRAILNL/dest" "$WORK/o" "$WORK/e" "$TRAILNL/repo" --force --skill "$odd"
 assert_status "a name ending in a newline installs" zero $?
 assert_true "the sibling of that name is untouched" test -f "$TRAILNL/dest/alpha/keep.txt"
 
@@ -443,7 +465,7 @@ mkdir -p "$CHAIN/repo/skills" "$CHAIN/dest" "$CHAIN/real/alpha"
 printf -- '---\nname: alpha\ndescription: smoke fixture\n---\n' >"$CHAIN/real/alpha/SKILL.md"
 ln -s "$CHAIN/real/alpha" "$CHAIN/dest/alpha"
 ln -s "$CHAIN/dest/alpha" "$CHAIN/repo/skills/alpha"
-run_at "$CHAIN" "$CHAIN/dest" "$WORK/o" "$WORK/e" "$CHAIN/repo" --symlink --skill alpha
+run_at "$CHAIN" "$CHAIN/dest" "$WORK/o" "$WORK/e" "$CHAIN/repo" --skill alpha
 assert_status "a destination inside the resolution chain aborts" nonzero $?
 assert_true "the middle link still points where it did" \
   test "$(readlink "$CHAIN/dest/alpha")" = "$CHAIN/real/alpha"
@@ -457,7 +479,7 @@ UNENTERABLE="$WORK/unenterable-target"
 mkdir -p "$UNENTERABLE/repo/skills" "$UNENTERABLE/dest/alpha"
 ln -s "$UNENTERABLE/dest/alpha" "$UNENTERABLE/repo/skills/alpha"
 chmod 600 "$UNENTERABLE/dest/alpha"
-run_at "$UNENTERABLE" "$UNENTERABLE/dest" "$WORK/o" "$WORK/e" "$UNENTERABLE/repo" --symlink-force --skill alpha
+run_at "$UNENTERABLE" "$UNENTERABLE/dest" "$WORK/o" "$WORK/e" "$UNENTERABLE/repo" --force --skill alpha
 status=$?
 chmod 700 "$UNENTERABLE/dest/alpha" 2>/dev/null
 assert_status "an unenterable symlink target does not slip past the guard" nonzero $status
@@ -470,17 +492,17 @@ UNREADABLE="$WORK/unreadable"
 mkdir -p "$UNREADABLE/repo/skills/alpha" "$UNREADABLE/dest"
 printf -- '---\nname: alpha\ndescription: smoke fixture\n---\n' >"$UNREADABLE/repo/skills/alpha/SKILL.md"
 chmod 600 "$UNREADABLE/repo/skills/alpha"
-run_at "$UNREADABLE" "$UNREADABLE/dest" "$WORK/o" "$WORK/e" "$UNREADABLE/repo" --symlink --skill alpha
+run_at "$UNREADABLE" "$UNREADABLE/dest" "$WORK/o" "$WORK/e" "$UNREADABLE/repo" --skill alpha
 status=$?
 chmod 700 "$UNREADABLE/repo/skills/alpha"
 assert_status "an unenterable source still installs" zero $status
 assert_true "it was linked" test -L "$UNREADABLE/dest/alpha"
 
 # A destination that cannot even be created is still a skill that could not be
-# installed, so it gets the same report as the ln and cp failures.
+# installed, so it gets the same report as the ln failures.
 echo "[reports a destination it cannot create]"
 mkdir -p "$WORK/locked" && chmod a-w "$WORK/locked"
-run_at "$WORK/proj" "$WORK/locked/skills" "$WORK/o" "$WORK/e" "$SRC" --symlink
+run_at "$WORK/proj" "$WORK/locked/skills" "$WORK/o" "$WORK/e" "$SRC"
 status=$?
 chmod u+w "$WORK/locked"
 assert_status "an uncreatable destination aborts" nonzero $status
@@ -490,12 +512,12 @@ assert_contains "it names the destination it could not create" "$WORK/both" 'Fai
 # The removal only runs when something already occupies the destination, so an
 # unwritable parent with the entry present is what reaches its failure branch.
 echo "[reports an existing install it cannot clear]"
-# --symlink-force, not --symlink: plain --symlink refuses a real directory
-# before it ever tries to remove one, so it never reaches this branch.
+# --force, not the default: the default refuses a real directory before it ever
+# tries to remove one, so it never reaches this branch.
 reset_dest
 mkdir -p "$DEST/alpha"
 chmod a-w "$DEST"
-run "$WORK/o" "$WORK/e" --symlink-force
+run "$WORK/o" "$WORK/e" --force
 status=$?
 chmod u+w "$DEST"
 assert_status "an unclearable install aborts" nonzero $status
@@ -507,24 +529,25 @@ assert_contains "it names the install it could not remove" "$WORK/both" 'Failed 
 reset_dest
 ln -s "$SRC/skills/alpha" "$DEST/alpha"
 chmod a-w "$DEST"
-run "$WORK/o" "$WORK/e" --symlink
+run "$WORK/o" "$WORK/e"
 status=$?
 chmod u+w "$DEST"
 assert_status "an unremovable link aborts" nonzero $status
 cat "$WORK/o" "$WORK/e" >"$WORK/both"
 assert_contains "it names the link it could not remove" "$WORK/both" 'Failed to remove'
 
-# cp -r copies what it can before failing, and skill discovery only looks for
-# SKILL.md, so a half-copied tree would read as a complete skill.
-echo "[leaves nothing behind after a partial copy]"
-reset_dest
-mkdir -p "$SRC/skills/alpha/sub" && echo secret >"$SRC/skills/alpha/sub/locked.txt"
-chmod a-r "$SRC/skills/alpha/sub/locked.txt"
-run "$WORK/o" "$WORK/e"
-assert_status "a partial copy aborts" nonzero $?
-assert_true "no half-copied skill is left behind" test ! -e "$DEST/alpha"
-chmod u+r "$SRC/skills/alpha/sub/locked.txt"
-rm -rf "$SRC/skills/alpha/sub"
+# The flags this used to take are gone, and nothing remaps them: an invocation
+# written against the old spelling has to fail loudly rather than install
+# something the caller did not ask for.
+echo "[removed flags are rejected]"
+for gone in --symlink --symlink-force; do
+  reset_dest
+  run "$WORK/o" "$WORK/e" "$gone"
+  assert_status "$gone aborts with non-zero status" nonzero $?
+  cat "$WORK/o" "$WORK/e" >"$WORK/both"
+  assert_contains "$gone is reported as an unknown option" "$WORK/both" "Unknown option: $gone"
+  assert_true "$gone installed nothing" test ! -e "$DEST/alpha"
+done
 
 # --install symlinks the script into ~/.local/bin. When the script being run is
 # already the real file at that path, resolving it yields the destination
@@ -595,7 +618,7 @@ reset_dest
 chmod a-w "$DEST"
 mkfifo "$WORK/fifo"
 exec 9<>"$WORK/fifo"
-(cd "$WORK/proj" && SKILLS_INSTALL_PATH="$DEST" "$ADD_SKILL" "$SRC" --symlink <&9 >/dev/null 2>&1) &
+(cd "$WORK/proj" && SKILLS_INSTALL_PATH="$DEST" "$ADD_SKILL" "$SRC" <&9 >/dev/null 2>&1) &
 blocked_pid=$!
 if wait_for_exit "$blocked_pid" 50; then
   ok "exits on its own when stdin is open but silent"
