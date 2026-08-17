@@ -658,6 +658,83 @@ assert_status "--install aborts when it cannot enter the directory" nonzero $sta
 capture_both
 assert_contains "--install says it could not enter it" "$WORK/both" 'Failed to enter'
 
+# A skill name is attacker-controlled as far as this script is concerned: it is
+# whatever directory the source repository happens to hold. echo -e would turn a
+# backslash sequence in one into a real escape on output, so a redirected log
+# picks up escapes the color gate never emitted.
+echo "[a skill name cannot inject an escape]"
+EVIL="$WORK/evil"
+mkdir -p "$EVIL/repo/skills/lit\\033[31mRED" "$EVIL/dest"
+printf -- '---\nname: evil\ndescription: smoke fixture\n---\n' >"$EVIL/repo/skills/lit\\033[31mRED/SKILL.md"
+run_at "$EVIL" "$EVIL/dest" "$WORK/o" "$WORK/e" "$EVIL/repo"
+assert_status "a skill whose name looks like an escape installs" zero $?
+assert_false "no escape reached stdout" grep -q $'\033' "$WORK/o"
+assert_false "nor stderr" grep -q $'\033' "$WORK/e"
+
+# Color needs a terminal, and every fixture above redirects both streams to
+# files, so [ -t 1 ] and [ -t 2 ] are false throughout and the color-on branch is
+# unreachable without a pty. script(1) supplies one; the two implementations
+# spell it differently — BSD, which macOS ships, takes the command as trailing
+# arguments, util-linux takes it through -c — so both are tried rather than
+# assuming one and skipping everyone on the other.
+#
+# Unlike the unwritable-directory probe near the top, a miss here does not exit.
+# That one exits because without it the failure assertions run against a user who
+# writes anyway, and go red against correct code. A miss here leaves the
+# color-on assertions unconstructible — absent rather than wrong — so a printed
+# note is what keeps the gap visible.
+echo "[color is gated on the stream and on NO_COLOR]"
+PTY=""
+if script -q /dev/null /bin/bash -c 'test -t 1 && printf PTYOK' 2>/dev/null | grep -q PTYOK; then
+  PTY=bsd
+elif script -q -c 'test -t 1 && printf PTYOK' /dev/null 2>/dev/null | grep -q PTYOK; then
+  PTY=util
+fi
+
+# pty_run <shell-command-string> — run it with stdout, and stderr, on a pty.
+pty_run() {
+  case "$PTY" in
+  bsd) script -q /dev/null /bin/bash -c "$1" ;;
+  util) script -q -c "$1" /dev/null ;;
+  esac
+}
+
+# mkcmd <env-assignments> — the standard install, as one shell command string.
+# The assignments land on add-skill itself: prefixing the leading cd instead
+# would scope them to that builtin and leave the run without them.
+mkcmd() {
+  printf 'cd %q && %s SKILLS_INSTALL_PATH=%q %q %q' \
+    "$WORK/proj" "$1" "$DEST" "$ADD_SKILL" "$SRC"
+}
+
+if [ -z "$PTY" ]; then
+  echo "  skip - script(1) here supplies no pty; the color-on branch is not exercised"
+else
+  reset_dest
+  pty_run "$(mkcmd '')" >"$WORK/o" 2>&1
+  assert_true "on a terminal the output is colored" grep -q $'\033' "$WORK/o"
+
+  reset_dest
+  pty_run "$(mkcmd 'NO_COLOR=1')" >"$WORK/o" 2>&1
+  assert_false "NO_COLOR turns it off" grep -q $'\033' "$WORK/o"
+
+  # The standard disables color when NO_COLOR is present *and not empty*, so an
+  # empty value is not a request for monochrome.
+  reset_dest
+  pty_run "$(mkcmd 'NO_COLOR=')" >"$WORK/o" 2>&1
+  assert_true "an empty NO_COLOR leaves it on" grep -q $'\033' "$WORK/o"
+
+  # The case a single shared gate cannot get right: stdout is a terminal and
+  # stderr is not, so the error stream must come out clean while stdout does not.
+  reset_dest
+  mkdir -p "$DEST/alpha" && echo mine >"$DEST/alpha/mine.txt"
+  pty_run "$(mkcmd '') 2>$(printf '%q' "$WORK/e")" >"$WORK/o" 2>/dev/null
+  assert_contains "the refusal still reaches the redirected stderr" "$WORK/e" '\[ERROR\]'
+  assert_false "with no escape in it" grep -q $'\033' "$WORK/e"
+  assert_true "while the terminal stdout keeps its color" grep -q $'\033' "$WORK/o"
+  rm -rf "${DEST:?}/alpha"
+fi
+
 # The failure path must not read from stdin. A fifo this script holds open
 # delivers nothing and never signals end of file, so anything that reads it
 # blocks instead of falling through. That blocking-with-no-EOF property is what

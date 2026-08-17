@@ -78,12 +78,17 @@ An install whose destination is, or contains, its own source is refused. A desti
 
 Nothing prompts for confirmation — if a skill cannot be installed, `add-skill` reports the reason and exits non-zero without installing the rest.
 
-### Environment Variable
+### Environment Variables
 
 ```bash
 # Override the installation path
 SKILLS_INSTALL_PATH=/custom/path add-skill ~/my-skills-repo
+
+# Disable colored output ([NO_COLOR](https://no-color.org))
+NO_COLOR=1 add-skill ~/my-skills-repo
 ```
+
+`NO_COLOR` disables color when set to any non-empty value. Color is switched off per stream anyway when that stream is not a terminal, so a run whose output you redirect or pipe records no escape sequences either way.
 
 ## Tests
 
