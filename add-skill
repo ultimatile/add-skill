@@ -53,6 +53,9 @@ USE_CODEX_REPO_PATH=false
 USE_KIRO_PATH=false
 USE_KIRO_REPO_PATH=false
 USE_FORCE=false
+# Set by install_skill when --force actually removed a real entry, so the
+# closing summary reports what happened rather than what was passed.
+REPLACED_REAL=false
 
 # Skills source (set from first positional argument)
 SKILLS_SOURCE_DIR=""
@@ -155,7 +158,7 @@ Options:
   --list              List available skills in the repository
   --all               Install all skills (default)
   --skill <name>      Install specific skill(s) (can be used multiple times)
-  --force             Replace a real file or directory at the destination
+  --force             Allow replacing a real file or directory at the destination
   --global            Install to Claude Code global skills path (~/.claude/skills, or $CLAUDE_CONFIG_DIR/skills if set)
   --codex             Install to Codex global skills path (~/.agents/skills)
   --codex-repo        Install to Codex repository-level path (./.agents/skills)
@@ -176,7 +179,7 @@ Examples:
   # Install all skills from a repository
   add-skill ~/my-skills-repo
 
-  # Install all skills, replacing a real file or directory at the destination
+  # Install all skills, allowing replacement of a real file or directory
   add-skill ~/my-skills-repo --force --all
 
   # Install specific skills
@@ -276,12 +279,12 @@ self_install() {
     return 0
   fi
 
-  # A real file here is replaced unasked, where a skill destination refuses one
-  # until --force. The asymmetry is deliberate: the two destinations hold
-  # different things. A skill destination is a path under the install path that
-  # can hold a hand-written skill this tool never put there, while this is one
-  # fixed path whose only expected occupant is add-skill itself — and the -ef
-  # check above already returns before touching the copy that is this script.
+  # A real file here is replaced unasked, where a skill destination gates that
+  # behind a flag. What differs is what the two can hold: a skill destination
+  # is any name under the install path, so something else may have written it,
+  # while this is one fixed path whose only expected occupant is add-skill
+  # itself — and the -ef check above already returns before touching the copy
+  # that is this script.
   if [ -e "$install_path" ] || [ -L "$install_path" ]; then
     print_warn "Removing existing: $install_path"
     if ! rm -f "$install_path"; then
@@ -500,9 +503,8 @@ install_skill() {
   # Clear the destination. A symlink is unlinked, never recursed into: rm -rf
   # reaches through one only when the path carries a trailing slash, which the
   # normalization above strips, and unlinking says so rather than leaning on
-  # that. Anything else is a real file or directory, and this only ever creates
-  # symlinks, so a real entry here was never ours — a hand-written skill, or an
-  # install from when this still copied. Replacing one is opt-in.
+  # that. Anything else is a real file or directory. The only thing this ever
+  # creates here is a symlink, so replacing a real entry is opt-in.
   local forced=""
   if [ -L "$dest_entry" ]; then
     if ! rm -f "$dest_entry"; then
@@ -514,14 +516,15 @@ install_skill() {
       print_error "$dest_path already exists and is not a symlink; pass --force to replace it"
       return 1
     fi
-    print_warn "Removing existing installation: $dest_path"
+    print_warn "Deleting the real file or directory at $dest_path"
     if ! rm -rf "$dest_entry"; then
       print_error "Failed to remove the existing $skill_name at $dest_path"
       return 1
     fi
     # Set here rather than from the flag: --force over an absent or symlinked
-    # destination replaces nothing, and this marks what happened.
+    # destination replaces nothing, and these mark what happened.
     forced=" (forced)"
+    REPLACED_REAL=true
   fi
 
   print_info "Creating symlink for $skill_name..."
@@ -539,7 +542,6 @@ install_skill() {
 }
 
 # Parse arguments
-# First pass: extract --help and --install before positional arg
 DO_LIST=false
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -750,8 +752,7 @@ print_info "Skills installed to: $INSTALL_PATH"
 echo ""
 
 print_info "Skills are symlinked from: $SKILLS_SOURCE_DIR"
-echo ""
-if [ "$USE_FORCE" = true ]; then
-  echo "  → Replaces a real file or directory at the destination"
-  echo ""
+if [ "$REPLACED_REAL" = true ]; then
+  echo "  → Replaced a real file or directory at the destination"
 fi
+echo ""

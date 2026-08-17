@@ -29,7 +29,7 @@ add-skill ~/my-skills-repo
 # Install specific skills
 add-skill ~/my-skills-repo --skill my-skill --skill another-skill
 
-# Replace a real file or directory sitting at the destination
+# Install all skills, allowing replacement of a real file or directory
 add-skill ~/my-skills-repo --force --all
 ```
 
@@ -72,7 +72,7 @@ Each skill is installed as a symlink pointing at the source repository, so an ed
 What `add-skill` does with whatever already sits at a skill's destination:
 
 - A **symlink** is replaced. It is unlinked rather than followed, so whatever it pointed at is untouched.
-- A **real file or directory** is refused, and the message says so. Pass `--force` to replace it. Since `add-skill` only ever creates symlinks, a real entry there is something else — a hand-written skill, or an install from a version that still copied.
+- A **real file or directory** is refused, and the message says so. Pass `--force` to replace it. Since this version only ever creates symlinks, a real entry is not one it made — for example, your own file, or an install left by an older version that copied.
 
 An install whose destination is, or contains, its own source is refused. A destination *inside* the source is not — a repository that is itself a skill can install into the `.claude/skills` within it.
 
