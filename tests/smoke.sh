@@ -113,8 +113,18 @@ reset_dest() {
 
 # Several assertions need a pattern matched against the run's stdout and stderr
 # together, without caring which stream carried it.
+#
+# Every call also enforces the routing invariant on the run it just captured. A
+# diagnostic tag on stdout is wrong whether the run succeeded or failed, so the
+# check belongs here rather than appended to each fixture: the combined capture
+# the assertions below read cannot see which stream carried a match, and this is
+# the one place that still can. Numbered, because the label is otherwise the
+# same at every site and a failure has to be locatable.
+ROUTING_CHECKS=0
 capture_both() {
   cat "$WORK/o" "$WORK/e" >"$WORK/both"
+  ROUTING_CHECKS=$((ROUTING_CHECKS + 1))
+  assert_absent "no diagnostic tag on stdout (#$ROUTING_CHECKS)" "$WORK/o" '\[\(ERROR\|WARN\)\]'
 }
 
 # Without set -e a failed mktemp would leave WORK empty and every path below
@@ -280,7 +290,10 @@ assert_contains "it points at --force" "$WORK/both" '\[ERROR\].*--force'
 run "$WORK/o" "$WORK/e" --force
 assert_status "--force replaces the real directory" zero $?
 assert_true "the destination became a symlink" test -L "$DEST/alpha"
-assert_contains "the deletion is announced before it happens" "$WORK/o" 'Deleting the real file or directory'
+# On the error stream specifically, not the combined capture: the routing is
+# what this asserts, and a combined grep would pass either way.
+assert_contains "the deletion is announced before it happens" "$WORK/e" 'Deleting the real file or directory'
+assert_absent "the deletion is not announced on stdout" "$WORK/o" 'Deleting the real file or directory'
 assert_contains "the replacement is marked forced" "$WORK/o" 'Symlinked alpha (forced)'
 # bravo was absent, not replaced, so the marker must be per-skill rather than
 # set once for the run. A whole-output grep for '(forced)' cannot tell those apart.
@@ -557,6 +570,24 @@ for gone in --symlink --symlink-force; do
   assert_true "$gone installed nothing" test ! -e "$DEST/alpha"
 done
 
+# Usage printed because a run failed is part of the failure, so it goes where the
+# error went. `--help`, which asks for the same text, keeps it on stdout.
+echo "[usage on failure goes to stderr, usage on request does not]"
+(cd "$WORK/proj" && "$ADD_SKILL" </dev/null >"$WORK/o" 2>"$WORK/e")
+assert_status "no argument at all aborts" nonzero $?
+assert_contains "the usage lines are on stderr" "$WORK/e" '^Usage: add-skill'
+assert_absent "and not on stdout" "$WORK/o" '^Usage: add-skill'
+
+run "$WORK/o" "$WORK/e" --no-such-flag
+assert_status "an unknown option aborts" nonzero $?
+assert_contains "the help it prints is on stderr" "$WORK/e" 'Show this help message'
+assert_absent "and not on stdout" "$WORK/o" 'Show this help message'
+
+"$ADD_SKILL" --help </dev/null >"$WORK/o" 2>"$WORK/e"
+assert_status "--help exits 0" zero $?
+assert_contains "--help writes to stdout, where it was asked for" "$WORK/o" 'Show this help message'
+assert_true "and leaves stderr empty" test ! -s "$WORK/e"
+
 # --install symlinks the script into ~/.local/bin. When the script being run is
 # already the real file at that path, resolving it yields the destination
 # itself, and removing-then-linking would destroy the only copy.
@@ -572,6 +603,17 @@ assert_true "the script was not replaced by a symlink" test ! -L "$FAKE/.local/b
 assert_true "the script still has content" test -s "$FAKE/.local/bin/add-skill"
 capture_both
 assert_contains "it still says where PATH stands" "$WORK/both" 'PATH'
+
+# A multi-line diagnostic has to arrive whole on one stream. The PATH warning is
+# the longest one the script has: a warning line, a lead-in, and a per-shell
+# configuration block. Routing only the warning would leave the block behind.
+echo "[a multi-line diagnostic is not split across streams]"
+FAKE_PATH="$WORK/home-path"
+mkdir -p "$FAKE_PATH/.local/bin"
+HOME="$FAKE_PATH" PATH="/usr/bin:/bin" "$ADD_SKILL" --install </dev/null >"$WORK/o" 2>"$WORK/e"
+assert_contains "the PATH warning is on stderr" "$WORK/e" 'is not in your PATH'
+assert_contains "and so is the block that explains it" "$WORK/e" 'fish_add_path'
+assert_absent "with nothing of it left on stdout" "$WORK/o" 'fish_add_path'
 
 # --install's own filesystem calls report the same way the skill path's do.
 echo "[--install reports what it could not do]"

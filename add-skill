@@ -82,12 +82,14 @@ print_info() {
   echo -e "${GREEN}[INFO]${NC} $1"
 }
 
+# Diagnostics go to stderr so that redirecting stdout away — to drop the
+# install log, or to capture it — keeps the reason a run failed visible.
 print_warn() {
-  echo -e "${YELLOW}[WARN]${NC} $1"
+  echo -e "${YELLOW}[WARN]${NC} $1" >&2
 }
 
 print_error() {
-  echo -e "${RED}[ERROR]${NC} $1"
+  echo -e "${RED}[ERROR]${NC} $1" >&2
 }
 
 # True when the first resolved path is the second or sits inside it. An empty
@@ -231,19 +233,24 @@ report_path_state() {
     print_info "add-skill is now available in your PATH"
     return 0
   fi
-  echo ""
-  print_warn "$install_dir is not in your PATH"
-  echo "  Add the following to your shell configuration:"
-  echo ""
-  echo "  # For bash (~/.bashrc):"
-  echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
-  echo ""
-  echo "  # For zsh (~/.zshrc):"
-  echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
-  echo ""
-  echo "  # For fish (~/.config/fish/config.fish):"
-  echo "  fish_add_path \$HOME/.local/bin"
-  echo ""
+  # One message, so one stream. The blank line above the warning and the
+  # configuration block below it are as much a part of it as the warning
+  # itself, and splitting them would leave half on stdout.
+  {
+    echo ""
+    print_warn "$install_dir is not in your PATH"
+    echo "  Add the following to your shell configuration:"
+    echo ""
+    echo "  # For bash (~/.bashrc):"
+    echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+    echo ""
+    echo "  # For zsh (~/.zshrc):"
+    echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+    echo ""
+    echo "  # For fish (~/.config/fish/config.fish):"
+    echo "  fish_add_path \$HOME/.local/bin"
+    echo ""
+  } >&2
 }
 
 # Install add-skill itself to ~/.local/bin
@@ -361,10 +368,14 @@ list_available_skills() {
     fi
   done
 
+  # The closing blank belongs to whatever it closes: the listing on stdout,
+  # or the warning that replaced it on stderr.
   if [ "$found" = false ]; then
     print_warn "No skills found (no SKILL.md files)"
+    echo "" >&2
+  else
+    echo ""
   fi
-  echo ""
 }
 
 # Returns non-zero when the skill could not be installed. Callers must stay bare
@@ -600,8 +611,12 @@ while [[ $# -gt 0 ]]; do
     ;;
   -*)
     print_error "Unknown option: $1"
-    echo ""
-    show_help
+    # Usage shown because the run failed, so it goes where the error went.
+    # `--help` above still writes to stdout, where it was asked for.
+    {
+      echo ""
+      show_help
+    } >&2
     exit 1
     ;;
   *)
@@ -647,10 +662,12 @@ fi
 # Require skills repo path for all other operations
 if [ -z "$SKILLS_SOURCE_DIR" ]; then
   print_error "Missing required argument: <skills-repo-path>"
-  echo ""
-  echo "Usage: add-skill <skills-repo-path> [options]"
-  echo "       add-skill --install"
-  echo "       add-skill --help"
+  {
+    echo ""
+    echo "Usage: add-skill <skills-repo-path> [options]"
+    echo "       add-skill --install"
+    echo "       add-skill --help"
+  } >&2
   exit 1
 fi
 
@@ -688,7 +705,7 @@ echo ""
 # Check if source directory exists
 if [ ! -d "$SKILLS_SOURCE_DIR" ]; then
   print_error "Skills source directory not found: $SKILLS_SOURCE_DIR"
-  echo "  Make sure the repository has a skills/ directory"
+  echo "  Make sure the repository has a skills/ directory" >&2
   exit 1
 fi
 
