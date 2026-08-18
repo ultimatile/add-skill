@@ -12,13 +12,37 @@
 
 set -e
 
-VERSION="0.6.0"
+VERSION="0.7.0"
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+# Colors for output, gated per stream. One shared gate cannot serve both: with
+# stdout on a terminal and stderr redirected to a file, a gate on [ -t 1 ] lets
+# print_error write escapes into that file, and a gate on [ -t 2 ] loses the
+# color on the terminal stdout instead. Gating on both at once is safe but
+# drops the color whenever the two streams differ, so they are separate.
+#
+# NO_COLOR is checked with ${NO_COLOR-}, not ${NO_COLOR+set}: no-color.org
+# disables color when the variable is "present and not an empty string", so an
+# empty value leaves it on. That standard says nothing about terminals, which
+# is why the two conditions are independent rather than one test.
+#
+# $'...' rather than '\033', so these hold a real escape character and the
+# message functions below need no interpretation pass to emit them.
+if [ -t 1 ] && [ -z "${NO_COLOR-}" ]; then
+  OUT_GREEN=$'\033[0;32m'
+  OUT_NC=$'\033[0m'
+else
+  OUT_GREEN=''
+  OUT_NC=''
+fi
+if [ -t 2 ] && [ -z "${NO_COLOR-}" ]; then
+  ERR_RED=$'\033[0;31m'
+  ERR_YELLOW=$'\033[1;33m'
+  ERR_NC=$'\033[0m'
+else
+  ERR_RED=''
+  ERR_YELLOW=''
+  ERR_NC=''
+fi
 
 # Expand a leading ~ to $HOME. Environment variables assigned with quotes
 # (e.g. CLAUDE_CONFIG_DIR="~/.claude_fn") are not tilde-expanded by the shell,
@@ -57,6 +81,21 @@ USE_FORCE=false
 # closing summary reports what happened rather than what was passed.
 REPLACED_REAL=false
 
+# How much a successful run says. The default is set before the argument parser
+# runs, because the parser is what overrides it: assigning it afterwards would
+# clobber whatever --quiet or --verbose had selected.
+# quiet suppresses informational output
+# only — print_info, the blanks that space it, and the exit summary — and leaves
+# warnings and errors alone: a warning about a deletion is worth more noise than
+# silence.
+VERBOSITY=normal
+
+# What the normal level reports once, at exit. Appended to only after ln -s
+# returns, so a skill that failed is never named as installed.
+INSTALLED_NAMES=""
+INSTALLED_COUNT=0
+FORCED_NAMES=""
+
 # Skills source (set from first positional argument)
 SKILLS_SOURCE_DIR=""
 
@@ -78,16 +117,70 @@ SPECIFIC_SKILLS=()
 DO_SELF_INSTALL=false
 
 # Functions
+# printf, not echo -e. Most of these messages interpolate a path or a skill
+# name, and echo -e interprets backslash sequences anywhere in its argument:
+# a source repository holding a skill directory named
+# lit\033[31mRED -- a backslash, 033, then the rest, all legal in a filename --
+# installs fine and writes a real escape byte wherever the message lands. With
+# %s the message is inert: no backslash sequence in a name becomes an escape,
+# and the constants above are the only escape this formatting introduces. A name
+# holding a real escape byte still reaches the output as itself, because that
+# byte is the caller's data. The one place it comes out neutralized is the exit
+# summary: install_skill quotes a name holding whitespace or a control character
+# before appending it, and leaves every other name alone.
 print_info() {
-  echo -e "${GREEN}[INFO]${NC} $1"
+  [ "$VERBOSITY" = quiet ] && return 0
+  printf '%s[INFO]%s %s\n' "$OUT_GREEN" "$OUT_NC" "$1"
 }
 
+# A blank line that spaces informational output, so it goes when that goes.
+# Gating the message functions alone would leave these behind and the quiet
+# level would still write to stdout.
+print_blank() {
+  [ "$VERBOSITY" = quiet ] && return 0
+  echo ""
+}
+
+# Only the verbose level prints per-skill progress and the closing block.
+verbose_info() {
+  [ "$VERBOSITY" = verbose ] || return 0
+  print_info "$1"
+}
+
+verbose_blank() {
+  [ "$VERBOSITY" = verbose ] || return 0
+  echo ""
+}
+
+# What the normal level prints instead of the per-skill pair, from an EXIT trap
+# rather than after the loop. install_skill is called as a bare command, so
+# under set -e a failure aborts the script at that call and nothing placed
+# after the loop runs — a run that linked twenty of thirty-five skills would
+# report the failure and say nothing about the twenty it had already linked.
+#
+# Ends in return 0. The last conditional is false whenever nothing was
+# replaced, and the trap should not take its status from that.
+flush_summary() {
+  [ "$VERBOSITY" = normal ] || return 0
+  [ -n "$INSTALLED_NAMES" ] || return 0
+  local noun=skills
+  [ "$INSTALLED_COUNT" -eq 1 ] && noun=skill
+  print_info "Symlinked $INSTALLED_COUNT $noun:$INSTALLED_NAMES"
+  [ -n "$FORCED_NAMES" ] && print_info "Replaced a real file or directory for:$FORCED_NAMES"
+  return 0
+}
+# Fires on every exit, --help and --list included; the emptiness check above is
+# what keeps those silent, rather than an assumption about when the trap runs.
+trap flush_summary EXIT
+
+# Diagnostics go to stderr so that redirecting stdout away — to drop the
+# install log, or to capture it — keeps the reason a run failed visible.
 print_warn() {
-  echo -e "${YELLOW}[WARN]${NC} $1"
+  printf '%s[WARN]%s %s\n' "$ERR_YELLOW" "$ERR_NC" "$1" >&2
 }
 
 print_error() {
-  echo -e "${RED}[ERROR]${NC} $1"
+  printf '%s[ERROR]%s %s\n' "$ERR_RED" "$ERR_NC" "$1" >&2
 }
 
 # True when the first resolved path is the second or sits inside it. An empty
@@ -153,9 +246,11 @@ Arguments:
 
 Options:
   --help              Show this help message
-  --version, -v       Show version
+  --version, -V       Show version
   --install           Install add-skill itself to ~/.local/bin (symlink)
   --list              List available skills in the repository
+  --quiet, -q         Print no progress; warnings and errors still show
+  --verbose, -v       Print two lines per skill instead of one summary line
   --all               Install all skills (default)
   --skill <name>      Install specific skill(s) (can be used multiple times)
   --force             Allow replacing a real file or directory at the destination
@@ -168,6 +263,22 @@ Options:
 Environment Variables:
   SKILLS_INSTALL_PATH  Custom installation path (default: $PWD/.claude/skills, ~/.claude/skills with --global, ~/.agents/skills with --codex, ./.agents/skills with --codex-repo, ~/.kiro/skills with --kiro, or ./.kiro/skills with --kiro-repo)
   CLAUDE_CONFIG_DIR    Claude Code user config directory (default: ~/.claude); --global installs to its skills/ subdirectory
+  NO_COLOR             Set to any non-empty value to disable colored output (no-color.org)
+
+A successful install prints the two paths it works between, then one line naming
+every skill it linked. Where --force replaced something real, a fourth line names
+which skills. --verbose prints two lines per skill in place of that summary, and
+--quiet prints none of it.
+
+--quiet suppresses progress, not output you asked for: --list keeps its
+entries, and --version and --help print as they always do.
+
+Color is also disabled on a stream that is not a terminal, so a redirected run
+records none of add-skill's own escape sequences whether or not NO_COLOR is
+set. A skill name that itself contains an escape byte is your data, not this
+tool's formatting: the default level's summary quotes a name holding whitespace
+or a control character, so such a name comes out escaped, while --verbose prints
+every name as it is.
 
 Examples:
   # Install add-skill command to PATH
@@ -209,7 +320,8 @@ Examples:
   install is replaced, and is unlinked rather than followed. A real file or
   directory at the destination is refused unless --force is passed. Nothing
   asks for confirmation: if the install cannot be made, the run reports the
-  reason and stops.
+  reason on stderr and stops. Warnings and errors go to stderr at every
+  verbosity level, so redirecting stdout away keeps them.
 
   Codex skill locations (in search order; same-name skills are not merged,
   so both can appear in the skill selector):
@@ -231,19 +343,24 @@ report_path_state() {
     print_info "add-skill is now available in your PATH"
     return 0
   fi
-  echo ""
-  print_warn "$install_dir is not in your PATH"
-  echo "  Add the following to your shell configuration:"
-  echo ""
-  echo "  # For bash (~/.bashrc):"
-  echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
-  echo ""
-  echo "  # For zsh (~/.zshrc):"
-  echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
-  echo ""
-  echo "  # For fish (~/.config/fish/config.fish):"
-  echo "  fish_add_path \$HOME/.local/bin"
-  echo ""
+  # One message, so one stream. The blank line above the warning and the
+  # configuration block below it are as much a part of it as the warning
+  # itself, and splitting them would leave half on stdout.
+  {
+    echo ""
+    print_warn "$install_dir is not in your PATH"
+    echo "  Add the following to your shell configuration:"
+    echo ""
+    echo "  # For bash (~/.bashrc):"
+    echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+    echo ""
+    echo "  # For zsh (~/.zshrc):"
+    echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+    echo ""
+    echo "  # For fish (~/.config/fish/config.fish):"
+    echo "  fish_add_path \$HOME/.local/bin"
+    echo ""
+  } >&2
 }
 
 # Install add-skill itself to ~/.local/bin
@@ -302,10 +419,13 @@ self_install() {
   report_path_state "$install_dir"
 }
 
+# The entries are what --list was asked for, so they survive the quiet level.
+# The header and the blanks spacing them are decoration and do not, which
+# leaves `--list --quiet` a listing a caller can read straight through.
 list_available_skills() {
-  echo ""
+  print_blank
   print_info "Available skills in $SKILLS_SOURCE_DIR:"
-  echo ""
+  print_blank
 
   # Marketplace mode: list skills from marketplace.json
   if [ "$MARKETPLACE_MODE" = true ]; then
@@ -321,7 +441,7 @@ list_available_skills() {
         echo "  • $skill_name (SKILL.md not found)"
       fi
     done
-    echo ""
+    print_blank
     return 0
   fi
 
@@ -331,7 +451,7 @@ list_available_skills() {
     description=$(awk '/^---$/,/^---$/{if(/^description:/) {sub(/^description: */, ""); print; exit}}' "$SINGLE_SKILL_PATH/SKILL.md")
     echo "  • $SINGLE_SKILL_NAME"
     [ -n "$description" ] && echo "    $description"
-    echo ""
+    print_blank
     return 0
   fi
 
@@ -361,10 +481,14 @@ list_available_skills() {
     fi
   done
 
+  # The closing blank belongs to whatever it closes: the listing on stdout,
+  # or the warning that replaced it on stderr.
   if [ "$found" = false ]; then
     print_warn "No skills found (no SKILL.md files)"
+    echo "" >&2
+  else
+    print_blank
   fi
-  echo ""
 }
 
 # Returns non-zero when the skill could not be installed. Callers must stay bare
@@ -527,7 +651,7 @@ install_skill() {
     REPLACED_REAL=true
   fi
 
-  print_info "Creating symlink for $skill_name..."
+  verbose_info "Creating symlink for $skill_name..."
 
   # No -f. The removal above is what makes this correct, and -f cannot stand in
   # for it: with a real directory at the destination ln descends into it and
@@ -538,7 +662,31 @@ install_skill() {
     print_error "Failed to symlink $skill_name to $dest_path"
     return 1
   fi
-  print_info "✓ Symlinked $skill_name$forced: $dest_path -> $source_path"
+  verbose_info "✓ Symlinked $skill_name$forced: $dest_path -> $source_path"
+
+  # After the link, not before: an abort between the two would otherwise leave
+  # the summary naming a skill that never got installed.
+  #
+  # Quoted only where quoting is needed. A name holding whitespace or a control
+  # character would break the summary across physical lines, blur where one name
+  # ends and the next begins, or emit an escape byte into a redirected log, so
+  # those go through printf %q. Everything else is appended as it is, because on
+  # the bash the shebang selects %q mangles a multibyte name: it escapes some of
+  # its bytes and leaves the rest raw, so a skill named in Japanese comes out as
+  # a mixture that reads as neither. At this level the summary is the whole
+  # report, so that would be all the user gets.
+  #
+  # %q emits no trailing newline of its own, so the command substitution that
+  # reads it strips nothing.
+  local shown=$skill_name
+  case "$skill_name" in
+  *[[:space:]]* | *[[:cntrl:]]*) shown=$(printf '%q' "$skill_name") ;;
+  esac
+  INSTALLED_NAMES="$INSTALLED_NAMES $shown"
+  INSTALLED_COUNT=$((INSTALLED_COUNT + 1))
+  if [ -n "$forced" ]; then
+    FORCED_NAMES="$FORCED_NAMES $shown"
+  fi
 }
 
 # Parse arguments
@@ -549,9 +697,17 @@ while [[ $# -gt 0 ]]; do
     show_help
     exit 0
     ;;
-  --version | -v)
+  --version | -V)
     echo "add-skill $VERSION"
     exit 0
+    ;;
+  --quiet | -q)
+    VERBOSITY=quiet
+    shift
+    ;;
+  --verbose | -v)
+    VERBOSITY=verbose
+    shift
     ;;
   --install)
     DO_SELF_INSTALL=true
@@ -600,8 +756,12 @@ while [[ $# -gt 0 ]]; do
     ;;
   -*)
     print_error "Unknown option: $1"
-    echo ""
-    show_help
+    # Usage shown because the run failed, so it goes where the error went.
+    # `--help` above still writes to stdout, where it was asked for.
+    {
+      echo ""
+      show_help
+    } >&2
     exit 1
     ;;
   *)
@@ -647,10 +807,12 @@ fi
 # Require skills repo path for all other operations
 if [ -z "$SKILLS_SOURCE_DIR" ]; then
   print_error "Missing required argument: <skills-repo-path>"
-  echo ""
-  echo "Usage: add-skill <skills-repo-path> [options]"
-  echo "       add-skill --install"
-  echo "       add-skill --help"
+  {
+    echo ""
+    echo "Usage: add-skill <skills-repo-path> [options]"
+    echo "       add-skill --install"
+    echo "       add-skill --help"
+  } >&2
   exit 1
 fi
 
@@ -676,26 +838,21 @@ else
 fi
 
 # Main installation
-echo ""
-echo "╔════════════════════════════════════════════════════╗"
-echo "║       Skills Installation                          ║"
-echo "╚════════════════════════════════════════════════════╝"
-echo ""
 print_info "Source: $SKILLS_SOURCE_DIR"
 print_info "Destination: $INSTALL_PATH"
-echo ""
+verbose_blank
 
 # Check if source directory exists
 if [ ! -d "$SKILLS_SOURCE_DIR" ]; then
   print_error "Skills source directory not found: $SKILLS_SOURCE_DIR"
-  echo "  Make sure the repository has a skills/ directory"
+  echo "  Make sure the repository has a skills/ directory" >&2
   exit 1
 fi
 
 # Install selected skills
 if [ "$INSTALL_ALL" = true ]; then
-  print_info "Installing all skills..."
-  echo ""
+  verbose_info "Installing all skills..."
+  verbose_blank
 
   if [ "$MARKETPLACE_MODE" = true ]; then
     # Marketplace mode: install skills listed in marketplace.json
@@ -743,16 +900,15 @@ else
   fi
 fi
 
-echo ""
-echo "╔════════════════════════════════════════════════════╗"
-echo "║       Installation Complete!                       ║"
-echo "╚════════════════════════════════════════════════════╝"
-echo ""
-print_info "Skills installed to: $INSTALL_PATH"
-echo ""
-
-print_info "Skills are symlinked from: $SKILLS_SOURCE_DIR"
-if [ "$REPLACED_REAL" = true ]; then
+# The closing block restates the two paths the header already gave, so only the
+# verbose level keeps it. At the normal level flush_summary is what reports the
+# run, and it names the skills as well, so printing the arrow too would say the
+# same thing twice.
+verbose_blank
+verbose_info "Skills installed to: $INSTALL_PATH"
+verbose_blank
+verbose_info "Skills are symlinked from: $SKILLS_SOURCE_DIR"
+if [ "$VERBOSITY" = verbose ] && [ "$REPLACED_REAL" = true ]; then
   echo "  → Replaced a real file or directory at the destination"
 fi
-echo ""
+verbose_blank
