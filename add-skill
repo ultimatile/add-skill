@@ -81,9 +81,13 @@ USE_FORCE=false
 # closing summary reports what happened rather than what was passed.
 REPLACED_REAL=false
 
-# How much a successful run says. Set before the argument parser runs, because
-# print_error is reachable from inside it. quiet suppresses print_info and
-# nothing else: a warning about a deletion is worth more noise than silence.
+# How much a successful run says. The default is set before the argument parser
+# runs, because the parser is what overrides it: assigning it afterwards would
+# clobber whatever --quiet or --verbose had selected.
+# quiet suppresses informational output
+# only — print_info, the blanks that space it, and the exit summary — and leaves
+# warnings and errors alone: a warning about a deletion is worth more noise than
+# silence.
 VERBOSITY=normal
 
 # What the normal level reports once, at exit. Appended to only after ln -s
@@ -113,12 +117,17 @@ SPECIFIC_SKILLS=()
 DO_SELF_INSTALL=false
 
 # Functions
-# printf, not echo -e. Every one of these messages interpolates a path or a
-# skill name, and echo -e interprets backslash sequences anywhere in its
-# argument: a source repository holding a skill directory named
+# printf, not echo -e. Most of these messages interpolate a path or a skill
+# name, and echo -e interprets backslash sequences anywhere in its argument:
+# a source repository holding a skill directory named
 # lit\033[31mRED -- a backslash, 033, then the rest, all legal in a filename --
 # installs fine and writes a real escape byte wherever the message lands. With
-# %s the message is inert and the constants above are the only source of one.
+# %s the message is inert: no backslash sequence in a name becomes an escape,
+# and the constants above are the only escape this formatting introduces. A name
+# holding a real escape byte still reaches the output as itself, because that
+# byte is the caller's data. The one place it comes out neutralized is the exit
+# summary: install_skill quotes a name holding whitespace or a control character
+# before appending it, and leaves every other name alone.
 print_info() {
   [ "$VERBOSITY" = quiet ] && return 0
   printf '%s[INFO]%s %s\n' "$OUT_GREEN" "$OUT_NC" "$1"
@@ -147,14 +156,16 @@ verbose_blank() {
 # rather than after the loop. install_skill is called as a bare command, so
 # under set -e a failure aborts the script at that call and nothing placed
 # after the loop runs — a run that linked twenty of thirty-five skills would
-# report the failure and say nothing about the twenty it had already replaced.
+# report the failure and say nothing about the twenty it had already linked.
 #
 # Ends in return 0. The last conditional is false whenever nothing was
 # replaced, and the trap should not take its status from that.
 flush_summary() {
   [ "$VERBOSITY" = normal ] || return 0
   [ -n "$INSTALLED_NAMES" ] || return 0
-  print_info "Symlinked $INSTALLED_COUNT skills:$INSTALLED_NAMES"
+  local noun=skills
+  [ "$INSTALLED_COUNT" -eq 1 ] && noun=skill
+  print_info "Symlinked $INSTALLED_COUNT $noun:$INSTALLED_NAMES"
   [ -n "$FORCED_NAMES" ] && print_info "Replaced a real file or directory for:$FORCED_NAMES"
   return 0
 }
@@ -238,8 +249,8 @@ Options:
   --version, -V       Show version
   --install           Install add-skill itself to ~/.local/bin (symlink)
   --list              List available skills in the repository
-  --quiet, -q         Print nothing on success; warnings and errors still show
-  --verbose, -v       Print a line per skill instead of one summary line
+  --quiet, -q         Print no progress; warnings and errors still show
+  --verbose, -v       Print two lines per skill instead of one summary line
   --all               Install all skills (default)
   --skill <name>      Install specific skill(s) (can be used multiple times)
   --force             Allow replacing a real file or directory at the destination
@@ -254,8 +265,20 @@ Environment Variables:
   CLAUDE_CONFIG_DIR    Claude Code user config directory (default: ~/.claude); --global installs to its skills/ subdirectory
   NO_COLOR             Set to any non-empty value to disable colored output (no-color.org)
 
-Color is also disabled on a stream that is not a terminal, so a redirected
-run records no escape sequences whether or not NO_COLOR is set.
+A successful install prints the two paths it works between, then one line naming
+every skill it linked. Where --force replaced something real, a fourth line names
+which skills. --verbose prints two lines per skill in place of that summary, and
+--quiet prints none of it.
+
+--quiet suppresses progress, not output you asked for: --list keeps its
+entries, and --version and --help print as they always do.
+
+Color is also disabled on a stream that is not a terminal, so a redirected run
+records none of add-skill's own escape sequences whether or not NO_COLOR is
+set. A skill name that itself contains an escape byte is your data, not this
+tool's formatting: the default level's summary quotes a name holding whitespace
+or a control character, so such a name comes out escaped, while --verbose prints
+every name as it is.
 
 Examples:
   # Install add-skill command to PATH
@@ -644,16 +667,25 @@ install_skill() {
   # After the link, not before: an abort between the two would otherwise leave
   # the summary naming a skill that never got installed.
   #
-  # Through printf %q, because a skill name may hold a newline — the suite
-  # installs one that does — and a raw expansion would break the summary across
-  # physical lines and blur the boundary between two names containing spaces.
+  # Quoted only where quoting is needed. A name holding whitespace or a control
+  # character would break the summary across physical lines, blur where one name
+  # ends and the next begins, or emit an escape byte into a redirected log, so
+  # those go through printf %q. Everything else is appended as it is, because on
+  # the bash the shebang selects %q mangles a multibyte name: it escapes some of
+  # its bytes and leaves the rest raw, so a skill named in Japanese comes out as
+  # a mixture that reads as neither. At this level the summary is the whole
+  # report, so that would be all the user gets.
+  #
   # %q emits no trailing newline of its own, so the command substitution that
-  # reads it strips nothing; the hazard list_available_skills guards against
-  # with ${trimmed##*/} does not reach here.
-  INSTALLED_NAMES="$INSTALLED_NAMES $(printf '%q' "$skill_name")"
+  # reads it strips nothing.
+  local shown=$skill_name
+  case "$skill_name" in
+  *[[:space:]]* | *[[:cntrl:]]*) shown=$(printf '%q' "$skill_name") ;;
+  esac
+  INSTALLED_NAMES="$INSTALLED_NAMES $shown"
   INSTALLED_COUNT=$((INSTALLED_COUNT + 1))
   if [ -n "$forced" ]; then
-    FORCED_NAMES="$FORCED_NAMES $(printf '%q' "$skill_name")"
+    FORCED_NAMES="$FORCED_NAMES $shown"
   fi
 }
 

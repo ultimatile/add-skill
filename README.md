@@ -80,21 +80,31 @@ Nothing prompts for confirmation — if a skill cannot be installed, `add-skill`
 
 ### How much it prints
 
-A successful install reports itself on one line, naming the skills it linked:
+A successful install prints the two paths it works between, then one line naming every skill it linked:
 
 ```bash
 $ add-skill ~/my-skills-repo
-[INFO] Source: /home/you/my-skills-repo/skills
-[INFO] Destination: ./.claude/skills
+[INFO] Source: /path/to/my-skills-repo/skills
+[INFO] Destination: /path/to/project/.claude/skills
 [INFO] Symlinked 3 skills: alpha bravo charlie
+```
+
+The destination shown is the default, `$PWD/.claude/skills`, which is why it appears absolute. `SKILLS_INSTALL_PATH` overrides it and prints exactly as you set it.
+
+When `--force` replaced something real, a fourth line names which skills it replaced:
+
+```
+[INFO] Replaced a real file or directory for: alpha
 ```
 
 Two flags move off that default:
 
 | Flag | Effect |
 |------|--------|
-| `--quiet`, `-q` | Print nothing on success. Warnings and errors still appear. |
-| `--verbose`, `-v` | Print a line per skill as it is linked, plus a closing block. |
+| `--quiet`, `-q` | Print no progress. Warnings and errors still appear. |
+| `--verbose`, `-v` | Print two lines per skill as it is linked, plus a closing block. |
+
+`-v` is the verbose flag; the version is `--version` or `-V`.
 
 Warnings and errors go to stderr at every level, so `--quiet` silences a run that works without hiding one that does not:
 
@@ -104,7 +114,7 @@ add-skill ~/my-skills-repo --quiet
 
 Redirecting stdout is a separate lever, not a substitute for either half. `>/dev/null` drops the summary whether or not `--quiet` was passed, and it never drops the errors.
 
-`--list` is not progress output, so its entries survive `--quiet` while the header and blank lines around them do not — which leaves a listing you can read straight into another command.
+`--quiet` suppresses progress, not output you asked for: `--list` keeps its entries, losing only the header and the blank lines around them, and `--version` and `--help` print as they always do.
 
 ### Environment Variables
 
@@ -112,11 +122,13 @@ Redirecting stdout is a separate lever, not a substitute for either half. `>/dev
 # Override the installation path
 SKILLS_INSTALL_PATH=/custom/path add-skill ~/my-skills-repo
 
-# Disable colored output ([NO_COLOR](https://no-color.org))
+# Disable colored output
 NO_COLOR=1 add-skill ~/my-skills-repo
 ```
 
-`NO_COLOR` disables color when set to any non-empty value. Color is switched off per stream anyway when that stream is not a terminal, so a run whose output you redirect or pipe records no escape sequences either way.
+[`NO_COLOR`](https://no-color.org) disables color when set to any non-empty value. Color is switched off per stream anyway when that stream is not a terminal, so a run whose output you redirect or pipe gets no escape sequences of `add-skill`'s own either way.
+
+A skill whose directory name itself contains an escape byte is a separate matter, since the name is your data rather than this tool's formatting. The default level's summary shell-quotes a name holding whitespace or a control character, so such a name comes out escaped; every other name, and every name under `--verbose`, is printed as it is.
 
 ## Tests
 
