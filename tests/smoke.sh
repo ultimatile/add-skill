@@ -820,6 +820,18 @@ run "$WORK/o" "$WORK/e" -q
 assert_status "-q is --quiet" zero $?
 assert_true "-q writes nothing to stdout either" test ! -s "$WORK/o"
 
+# Both flags name one setting, so the last one given decides. Neither order is
+# an error, and nothing else in the suite would notice if one silently won.
+reset_dest
+run "$WORK/o" "$WORK/e" --verbose --quiet
+assert_status "--verbose --quiet exits 0" zero $?
+assert_true "quiet last wins, so stdout is empty" test ! -s "$WORK/o"
+
+reset_dest
+run "$WORK/o" "$WORK/e" --quiet --verbose
+assert_status "--quiet --verbose exits 0" zero $?
+assert_contains "verbose last wins, so the per-skill lines return" "$WORK/o" 'Creating symlink for alpha'
+
 # Quiet suppresses information, not diagnosis.
 reset_dest
 real_entry_at alpha
@@ -1041,9 +1053,15 @@ pty_run() {
   esac
 }
 
-# mkcmd <env-assignments> — the standard install, as one shell command string.
-# The assignments land on add-skill itself: prefixing the leading cd instead
-# would scope them to that builtin and leave the run without them.
+# mkcmd <env-prefix> — the standard install, as one shell command string. The
+# prefix is whatever should sit immediately before the command: a variable
+# assignment, or an `env` invocation where a variable has to be removed rather
+# than set. It lands on add-skill itself, because prefixing the leading cd
+# instead would scope it to that builtin and leave the run without it.
+#
+# The cases that leave NO_COLOR alone pass `env -u NO_COLOR`: they assert output
+# IS coloured, which an ambient NO_COLOR would otherwise be free to falsify. The
+# cases that set it themselves need no such prefix — their own value wins.
 mkcmd() {
   printf 'cd %q && %s SKILLS_INSTALL_PATH=%q %q %q' \
     "$WORK/proj" "$1" "$DEST" "$ADD_SKILL" "$SRC"
@@ -1054,7 +1072,7 @@ if [ -z "$PTY" ]; then
     "the color-on branch is not exercised"
 else
   reset_dest
-  pty_run "$(mkcmd '')" >"$WORK/o" 2>&1
+  pty_run "$(mkcmd 'env -u NO_COLOR')" >"$WORK/o" 2>&1
   assert_true "on a terminal the output is colored" grep -q $'\033' "$WORK/o"
 
   reset_dest
@@ -1071,7 +1089,7 @@ else
   # stderr is not, so the error stream must come out clean while stdout does not.
   reset_dest
   real_entry_at alpha
-  pty_run "$(mkcmd '') 2>$(printf '%q' "$WORK/e")" >"$WORK/o" 2>/dev/null
+  pty_run "$(mkcmd 'env -u NO_COLOR') 2>$(printf '%q' "$WORK/e")" >"$WORK/o" 2>/dev/null
   assert_contains "the refusal still reaches the redirected stderr" "$WORK/e" '\[ERROR\]'
   assert_false "with no escape in it" grep -q $'\033' "$WORK/e"
   assert_true "while the terminal stdout keeps its color" grep -q $'\033' "$WORK/o"
