@@ -1034,12 +1034,18 @@ echo "[color is gated on the stream and on NO_COLOR]"
 # case it was never meant to cover, quietly dropping the colour assertions with
 # only a note to show for it. Retrying is what separates "this platform cannot",
 # where skipping is right, from "this attempt did not".
+# Every script(1) call below reads stdin from /dev/null. It inspects its own
+# stdin to size the terminal it allocates, and fails outright — "ioctl:
+# Operation not supported on socket" — when that stdin is a socket, which is
+# what a suite launched from a CI runner or an agent harness inherits. Left to
+# inherit, the colour assertions would be exercised or skipped according to how
+# the suite was started rather than according to what the platform can do.
 PTY=""
 pty_tries=0
 while [ -z "$PTY" ] && [ "$pty_tries" -lt 5 ]; do
-  if script -q /dev/null /bin/bash -c 'test -t 1 && printf PTYOK' 2>/dev/null | grep -q PTYOK; then
+  if script -q /dev/null /bin/bash -c 'test -t 1 && printf PTYOK' </dev/null 2>/dev/null | grep -q PTYOK; then
     PTY=bsd
-  elif script -q -c 'test -t 1 && printf PTYOK' /dev/null 2>/dev/null | grep -q PTYOK; then
+  elif script -q -c 'test -t 1 && printf PTYOK' /dev/null </dev/null 2>/dev/null | grep -q PTYOK; then
     PTY=util
   fi
   pty_tries=$((pty_tries + 1))
@@ -1048,8 +1054,8 @@ done
 # pty_run <shell-command-string> — run it with stdout, and stderr, on a pty.
 pty_run() {
   case "$PTY" in
-  bsd) script -q /dev/null /bin/bash -c "$1" ;;
-  util) script -q -c "$1" /dev/null ;;
+  bsd) script -q /dev/null /bin/bash -c "$1" </dev/null ;;
+  util) script -q -c "$1" /dev/null </dev/null ;;
   esac
 }
 
@@ -1071,8 +1077,15 @@ if [ -z "$PTY" ]; then
   skipped 6 "script(1) supplied no pty in $pty_tries attempts of either spelling;" \
     "the color-on branch is not exercised"
 else
+  # NO_COLOR=1 is planted on this call, and on the split-stream one below, on
+  # purpose. A test's verdict has to come from the code under test and the
+  # fixture the test builds, never from what the shell running it happened to
+  # inherit — and a colour assertion is where that leaks, since the variable it
+  # turns on is one a developer plausibly exports. Running these two against a
+  # hostile value is what makes their own `env -u` guard load-bearing: remove it
+  # and the assertion fails here rather than only on someone else's machine.
   reset_dest
-  pty_run "$(mkcmd 'env -u NO_COLOR')" >"$WORK/o" 2>&1
+  NO_COLOR=1 pty_run "$(mkcmd 'env -u NO_COLOR')" >"$WORK/o" 2>&1
   assert_true "on a terminal the output is colored" grep -q $'\033' "$WORK/o"
 
   reset_dest
@@ -1089,7 +1102,7 @@ else
   # stderr is not, so the error stream must come out clean while stdout does not.
   reset_dest
   real_entry_at alpha
-  pty_run "$(mkcmd 'env -u NO_COLOR') 2>$(printf '%q' "$WORK/e")" >"$WORK/o" 2>/dev/null
+  NO_COLOR=1 pty_run "$(mkcmd 'env -u NO_COLOR') 2>$(printf '%q' "$WORK/e")" >"$WORK/o" 2>/dev/null
   assert_contains "the refusal still reaches the redirected stderr" "$WORK/e" '\[ERROR\]'
   assert_false "with no escape in it" grep -q $'\033' "$WORK/e"
   assert_true "while the terminal stdout keeps its color" grep -q $'\033' "$WORK/o"
