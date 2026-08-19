@@ -56,7 +56,6 @@ expand_tilde() {
   esac
 }
 
-# Default installation paths
 DEFAULT_INSTALL_PATH="$PWD/.claude/skills"
 # Claude Code honors CLAUDE_CONFIG_DIR to relocate the user-level config
 # directory (default ~/.claude). Global skills live under its skills/ subdir,
@@ -81,13 +80,8 @@ USE_FORCE=false
 # closing summary reports what happened rather than what was passed.
 REPLACED_REAL=false
 
-# How much a successful run says. The default is set before the argument parser
-# runs, because the parser is what overrides it: assigning it afterwards would
-# clobber whatever --quiet or --verbose had selected.
-# quiet suppresses informational output
-# only — print_info, the blanks that space it, and the exit summary — and leaves
-# warnings and errors alone: a warning about a deletion is worth more noise than
-# silence.
+# How much a successful run says. quiet leaves warnings and errors alone: a
+# warning about a deletion is worth more noise than silence.
 VERBOSITY=normal
 
 # What the normal level reports once, at exit. Appended to only after ln -s
@@ -96,7 +90,6 @@ INSTALLED_NAMES=""
 INSTALLED_COUNT=0
 FORCED_NAMES=""
 
-# Skills source (set from first positional argument)
 SKILLS_SOURCE_DIR=""
 
 # Single-skill repo mode: true when the repo root itself contains SKILL.md
@@ -109,14 +102,11 @@ MARKETPLACE_MODE=false
 MARKETPLACE_SKILL_PATHS=()
 MARKETPLACE_SKILL_NAMES=()
 
-# Skills to install
 INSTALL_ALL=true
 SPECIFIC_SKILLS=()
 
-# Self-install flag
 DO_SELF_INSTALL=false
 
-# Functions
 # printf, not echo -e. Most of these messages interpolate a path or a skill
 # name, and echo -e interprets backslash sequences anywhere in its argument:
 # a source repository holding a skill directory named
@@ -125,9 +115,7 @@ DO_SELF_INSTALL=false
 # %s the message is inert: no backslash sequence in a name becomes an escape,
 # and the constants above are the only escape this formatting introduces. A name
 # holding a real escape byte still reaches the output as itself, because that
-# byte is the caller's data. The one place it comes out neutralized is the exit
-# summary: install_skill quotes a name holding whitespace or a control character
-# before appending it, and leaves every other name alone.
+# byte is the caller's data.
 print_info() {
   [ "$VERBOSITY" = quiet ] && return 0
   printf '%s[INFO]%s %s\n' "$OUT_GREEN" "$OUT_NC" "$1"
@@ -363,7 +351,6 @@ report_path_state() {
   } >&2
 }
 
-# Install add-skill itself to ~/.local/bin
 self_install() {
   local script_path
   # Resolve symlinks to get the real path, avoiding self-referencing symlink
